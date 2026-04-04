@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hybrid Meat Freshness Scanner</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <main class="page-shell">
+    <section class="hero-card">
+      <p class="eyebrow">Raspberry Pi 5 Deployment</p>
+      <h1>Hybrid Meat Freshness Scanner</h1>
+      <p class="hero-copy">Live MQ sensing, Raspberry Pi camera capture, and hybrid image-plus-sensor prediction using the trained SVM model.</p>
+      <div class="status-row">
+        <span id="systemState" class="status-pill">Loading...</span>
+        <span id="warmupState" class="sub-pill">Checking warm-up...</span>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <div class="panel-heading">
+          <h2>Controls</h2>
+          <p>Warm up, stabilize, capture, then predict.</p>
+        </div>
+
+        <label class="field">
+          <span>Meat Type</span>
+          <select id="meatType">
+            {% for meat_type in meat_types %}
+            <option value="{{ meat_type }}">{{ meat_type }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <div class="button-stack">
+          <button id="baselineBtn" class="ghost-button">Capture Baseline</button>
+          <button id="stabilizeBtn" class="primary-button">Stabilize Sensors</button>
+          <button id="captureBtn" class="secondary-button">Capture Image</button>
+          <button id="predictBtn" class="accent-button" disabled>Predict Freshness</button>
+        </div>
+
+        <div class="helper-grid">
+          <button id="testSensorsBtn" class="ghost-button small">Test Sensors Only</button>
+          <button id="testCameraBtn" class="ghost-button small">Test Camera Only</button>
+          <button id="testInferenceBtn" class="ghost-button small">Test Full Inference</button>
+        </div>
+
+        <div class="message-box" id="messageBox">Waiting for system status...</div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-heading">
+          <h2>Live Sensors</h2>
+          <p>Prediction uses averaged stabilized ratios.</p>
+        </div>
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <h3>NH3</h3>
+            <strong id="nh3Ratio">--</strong>
+            <span>Rs/Ro</span>
+            <small id="nh3Debug">V: -- | Rs: --</small>
+          </div>
+          <div class="metric-card">
+            <h3>H2S</h3>
+            <strong id="h2sRatio">--</strong>
+            <span>Rs/Ro</span>
+            <small id="h2sDebug">V: -- | Rs: --</small>
+          </div>
+          <div class="metric-card">
+            <h3>VOC</h3>
+            <strong id="vocRatio">--</strong>
+            <span>Rs/Ro</span>
+            <small id="vocDebug">V: -- | Rs: --</small>
+          </div>
+        </div>
+
+        <div class="debug-panel">
+          <h3>Stability Notes</h3>
+          <ul id="stabilityList" class="note-list">
+            <li>No stabilization data yet.</li>
+          </ul>
+        </div>
+
+        <div class="debug-panel">
+          <h3>Optional Baseline</h3>
+          <div id="baselineBox" class="baseline-box">No baseline captured yet.</div>
+        </div>
+      </article>
+    </section>
+
+    <section class="grid bottom-grid">
+      <article class="panel">
+        <div class="panel-heading">
+          <h2>Captured Image</h2>
+          <p>Latest Pi camera image used for prediction.</p>
+        </div>
+        <div class="image-frame">
+          <img id="capturedImage" alt="Captured meat sample" />
+          <div id="imagePlaceholder" class="image-placeholder">No image captured yet.</div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-heading">
+          <h2>Prediction</h2>
+          <p>Freshness output from the saved hybrid model.</p>
+        </div>
+        <div class="prediction-card">
+          <span class="prediction-label">Predicted Freshness</span>
+          <strong id="predictionLabel">--</strong>
+          <span id="predictionConfidence" class="prediction-confidence">Confidence: --</span>
+          <small id="confidenceNote">No prediction yet.</small>
+        </div>
+
+        <div class="debug-panel">
+          <h3>Class Scores</h3>
+          <ul id="classScores" class="note-list">
+            <li>No class scores yet.</li>
+          </ul>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const refs = {
+      systemState: document.getElementById("systemState"),
+      warmupState: document.getElementById("warmupState"),
+      messageBox: document.getElementById("messageBox"),
+      meatType: document.getElementById("meatType"),
+      predictBtn: document.getElementById("predictBtn"),
+      nh3Ratio: document.getElementById("nh3Ratio"),
+      h2sRatio: document.getElementById("h2sRatio"),
+      vocRatio: document.getElementById("vocRatio"),
+      nh3Debug: document.getElementById("nh3Debug"),
+      h2sDebug: document.getElementById("h2sDebug"),
+      vocDebug: document.getElementById("vocDebug"),
+      stabilityList: document.getElementById("stabilityList"),
+      baselineBox: document.getElementById("baselineBox"),
+      capturedImage: document.getElementById("capturedImage"),
+      imagePlaceholder: document.getElementById("imagePlaceholder"),
+      predictionLabel: document.getElementById("predictionLabel"),
+      predictionConfidence: document.getElementById("predictionConfidence"),
+      confidenceNote: document.getElementById("confidenceNote"),
+      classScores: document.getElementById("classScores"),
+    };
+
+    function formatNumber(value, digits = 4) {
+      if (value === null || value === undefined || Number.isNaN(Number(value))) return "--";
+      return Number(value).toFixed(digits);
+    }
+
+    function setMessage(text, kind = "info") {
+      refs.messageBox.textContent = text;
+      refs.messageBox.dataset.kind = kind;
+    }
+
+    function updateSensorCards(snapshot) {
+      if (!snapshot) {
+        refs.nh3Ratio.textContent = "--";
+        refs.h2sRatio.textContent = "--";
+        refs.vocRatio.textContent = "--";
+        refs.nh3Debug.textContent = "V: -- | Rs: --";
+        refs.h2sDebug.textContent = "V: -- | Rs: --";
+        refs.vocDebug.textContent = "V: -- | Rs: --";
+        refs.stabilityList.innerHTML = "<li>No stabilization data yet.</li>";
+        return;
+      }
+
+      refs.nh3Ratio.textContent = formatNumber(snapshot.nh3_ratio, 2);
+      refs.h2sRatio.textContent = formatNumber(snapshot.h2s_ratio, 2);
+      refs.vocRatio.textContent = formatNumber(snapshot.voc_ratio, 2);
+      refs.nh3Debug.textContent = `V: ${formatNumber(snapshot.nh3_voltage, 2)} | Rs: ${formatNumber(snapshot.nh3_rs, 1)}`;
+      refs.h2sDebug.textContent = `V: ${formatNumber(snapshot.h2s_voltage, 2)} | Rs: ${formatNumber(snapshot.h2s_rs, 1)}`;
+      refs.vocDebug.textContent = `V: ${formatNumber(snapshot.voc_voltage, 2)} | Rs: ${formatNumber(snapshot.voc_rs, 1)}`;
+
+      refs.stabilityList.innerHTML = "";
+      const reasons = snapshot.stability_reasons || [];
+      if (!reasons.length) {
+        refs.stabilityList.innerHTML = `<li>${snapshot.stable ? "Sensors are stable and ready to scan." : "No stability notes."}</li>`;
+      } else {
+        reasons.forEach((reason) => {
+          const li = document.createElement("li");
+          li.textContent = reason;
+          refs.stabilityList.appendChild(li);
+        });
+      }
+    }
+
+    function updateBaselineBox(baseline) {
+      if (!baseline) {
+        refs.baselineBox.textContent = "No baseline captured yet.";
+        return;
+      }
+      refs.baselineBox.textContent =
+        `NH3 ${formatNumber(baseline.nh3_ratio, 3)} | ` +
+        `H2S ${formatNumber(baseline.h2s_ratio, 3)} | ` +
+        `VOC ${formatNumber(baseline.voc_ratio, 3)} | ` +
+        `Stable: ${baseline.stable ? "Yes" : "No"}`;
+    }
+
+    function updateImage(imageUrl) {
+      if (!imageUrl) {
+        refs.capturedImage.style.display = "none";
+        refs.imagePlaceholder.style.display = "grid";
+        return;
+      }
+      refs.capturedImage.src = `${imageUrl}?t=${Date.now()}`;
+      refs.capturedImage.style.display = "block";
+      refs.imagePlaceholder.style.display = "none";
+    }
+
+    function updatePrediction(prediction) {
+      if (!prediction) {
+        refs.predictionLabel.textContent = "--";
+        refs.predictionConfidence.textContent = "Confidence: --";
+        refs.confidenceNote.textContent = "No prediction yet.";
+        refs.classScores.innerHTML = "<li>No class scores yet.</li>";
+        return;
+      }
+
+      refs.predictionLabel.textContent = prediction.predicted_freshness || "--";
+      refs.predictionConfidence.textContent =
+        prediction.confidence === null || prediction.confidence === undefined
+          ? "Confidence: Not available"
+          : `Confidence: ${formatNumber(prediction.confidence, 4)}`;
+      refs.confidenceNote.textContent = prediction.confidence_note || "";
+
+      refs.classScores.innerHTML = "";
+      const scores = prediction.class_probabilities || {};
+      if (!Object.keys(scores).length) {
+        refs.classScores.innerHTML = "<li>No class score breakdown available.</li>";
+      } else {
+        Object.entries(scores).forEach(([label, value]) => {
+          const li = document.createElement("li");
+          li.textContent = `${label}: ${formatNumber(value, 4)}`;
+          refs.classScores.appendChild(li);
+        });
+      }
+    }
+
+    function updateStatusView(status) {
+      refs.systemState.textContent = status.sensor_ready ? "Ready to Scan" : "Stabilize Sensors";
+      refs.systemState.className = `status-pill ${status.sensor_ready ? "ready" : "idle"}`;
+
+      if (!status.warmed_up) {
+        refs.systemState.textContent = "Warming Up";
+        refs.systemState.className = "status-pill warming";
+      }
+
+      refs.warmupState.textContent = status.warmed_up
+        ? "Warm-up complete"
+        : `Warm-up remaining: ${formatNumber(status.warmup_remaining_seconds, 1)}s`;
+
+      refs.predictBtn.disabled = !(status.sensor_ready && status.latest_image_path);
+
+      if (status.last_error) setMessage(status.last_error, "error");
+
+      updateSensorCards(status.last_sensor_snapshot);
+      updateBaselineBox(status.baseline_snapshot);
+      updateImage(status.latest_image_url);
+      updatePrediction(status.latest_prediction);
+    }
+
+    async function fetchStatus() {
+      const response = await fetch("/api/status");
+      const payload = await response.json();
+      if (payload.ok) updateStatusView(payload.status);
+    }
+
+    async function callApi(url, method = "POST") {
+      const response = await fetch(url, { method, headers: { "Content-Type": "application/json" } });
+      const payload = await response.json();
+      if (!payload.ok) {
+        setMessage(payload.message || "Request failed.", "error");
+        if (payload.status) updateStatusView(payload.status);
+        return null;
+      }
+      if (payload.status) updateStatusView(payload.status);
+      if (payload.message) setMessage(payload.message, "success");
+      return payload;
+    }
+
+    document.getElementById("baselineBtn").addEventListener("click", async () => {
+      setMessage("Capturing baseline...", "info");
+      const payload = await callApi("/api/capture-baseline");
+      if (payload?.baseline) {
+        updateBaselineBox(payload.baseline);
+        setMessage("Baseline captured for debug display.", "success");
+      }
+    });
+
+    document.getElementById("stabilizeBtn").addEventListener("click", async () => {
+      setMessage("Stabilizing sensors...", "info");
+      const payload = await callApi("/api/stabilize");
+      if (payload?.snapshot) {
+        updateSensorCards(payload.snapshot);
+        setMessage(payload.ready_to_scan ? "Sensors are stable and ready." : "Sensors are not stable yet.", payload.ready_to_scan ? "success" : "warning");
+      }
+    });
+
+    document.getElementById("captureBtn").addEventListener("click", async () => {
+      setMessage("Capturing image...", "info");
+      const payload = await callApi("/api/capture-image");
+      if (payload?.image_url) {
+        updateImage(payload.image_url);
+        setMessage("Image captured successfully.", "success");
+      }
+    });
+
+    document.getElementById("predictBtn").addEventListener("click", async () => {
+      const meatType = refs.meatType.value;
+      setMessage("Running prediction...", "info");
+      const payload = await callApi(`/api/predict/${meatType}`);
+      if (payload?.prediction) {
+        updatePrediction(payload.prediction);
+        setMessage(`Prediction complete: ${payload.prediction.predicted_freshness}`, "success");
+      }
+    });
+
+    document.getElementById("testSensorsBtn").addEventListener("click", async () => {
+      setMessage("Reading live sensors...", "info");
+      const payload = await callApi("/api/test-sensors", "GET");
+      if (payload?.snapshot) {
+        updateSensorCards(payload.snapshot);
+        setMessage("Live sensor test completed.", "success");
+      }
+    });
+
+    document.getElementById("testCameraBtn").addEventListener("click", async () => {
+      setMessage("Testing camera capture...", "info");
+      const payload = await callApi("/api/test-camera");
+      if (payload?.image_url) {
+        updateImage(payload.image_url);
+        setMessage("Camera test image captured.", "success");
+      }
+    });
+
+    document.getElementById("testInferenceBtn").addEventListener("click", async () => {
+      const meatType = refs.meatType.value;
+      setMessage("Running full test inference...", "info");
+      const payload = await callApi(`/api/test-inference/${meatType}`);
+      if (payload?.prediction) {
+        updatePrediction(payload.prediction);
+        setMessage(`Test inference complete: ${payload.prediction.predicted_freshness}`, "success");
+      }
+    });
+
+    fetchStatus();
+    setInterval(fetchStatus, 5000);
+  </script>
+</body>
+</html>
