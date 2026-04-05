@@ -72,7 +72,6 @@ class HybridFreshnessGUI:
         self.system_state = tk.StringVar(value="Initializing")
         self.message_text = tk.StringVar(value="Starting Raspberry Pi meat freshness scanner...")
         self.warmup_text = tk.StringVar(value="Warm-up status unavailable")
-        self.button_status_text = tk.StringVar(value="Physical buttons: initializing...")
         self.prediction_text = tk.StringVar(value="--")
         self.confidence_text = tk.StringVar(value="Confidence: --")
         self.confidence_note_text = tk.StringVar(value="No prediction yet.")
@@ -190,10 +189,8 @@ class HybridFreshnessGUI:
 
         ttk.Label(panel, text="Controls", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(panel, text="Choose the meat type, then tap Start Scan. The system will stabilize sensors, capture the image, and predict freshness automatically.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 16))
-        tk.Label(panel, textvariable=self.button_status_text, bg=self.PANEL, fg=self.INFO, anchor="w", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, sticky="w", pady=(0, 12))
-
         selector_frame = tk.Frame(panel, bg=self.PANEL)
-        selector_frame.grid(row=3, column=0, sticky="ew")
+        selector_frame.grid(row=2, column=0, sticky="ew")
         ttk.Label(selector_frame, text="Meat Type", style="Body.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         meat_button_row = tk.Frame(selector_frame, bg=self.PANEL)
@@ -223,7 +220,7 @@ class HybridFreshnessGUI:
             ("Exit App", self.root.destroy, "#8a3243"),
         ]
 
-        for idx, (label, command, color) in enumerate(actions, start=4):
+        for idx, (label, command, color) in enumerate(actions, start=3):
             button = tk.Button(
                 panel,
                 text=label,
@@ -240,7 +237,7 @@ class HybridFreshnessGUI:
             button.grid(row=idx, column=0, sticky="ew", pady=(0, 10))
 
         message_panel = tk.Frame(panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
-        message_panel.grid(row=11, column=0, sticky="ew", pady=(8, 0))
+        message_panel.grid(row=10, column=0, sticky="ew", pady=(8, 0))
         self.message_label = tk.Label(
             message_panel,
             textvariable=self.message_text,
@@ -451,13 +448,9 @@ class HybridFreshnessGUI:
             self.button_controller = MeatButtonController(
                 lambda meat_type: self.worker_queue.put(lambda: self._set_meat_type_from_button(meat_type))
             )
-            pins = ", ".join(f"{meat}:{pin}" for meat, pin in config.MEAT_BUTTON_GPIO_MAP.items())
-            self.button_status_text.set(f"Physical buttons active ({pins})")
         except ButtonInputError as exc:
-            self.button_status_text.set("Physical buttons unavailable")
             self._append_log(str(exc))
         except Exception as exc:
-            self.button_status_text.set("Physical buttons failed to initialize")
             self._append_log(f"Physical button setup error: {exc}")
 
     def _get_sensor_reader(self) -> MQSensorReader:
