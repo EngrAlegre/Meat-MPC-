@@ -62,6 +62,12 @@ ALLOW_OPENCV_CAMERA_FALLBACK = True
 
 MEAT_TYPES = ("Chicken", "Beef", "Pork")
 FRESHNESS_CLASSES = ("Fresh", "Neutral", "Spoiled")
+MEAT_BUTTON_GPIO_MAP = {
+    "Chicken": 17,
+    "Pork": 27,
+    "Beef": 22,
+}
+BUTTON_BOUNCE_SECONDS = 0.15
 
 
 def ensure_runtime_dirs() -> None:

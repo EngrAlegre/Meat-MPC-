@@ -1,8 +1,8 @@
 # Raspberry Pi 5 Hybrid Deployment App
 
-This folder contains the live Raspberry Pi deployment program for your hybrid meat freshness detection system.
+This folder now contains a native Raspberry Pi touchscreen GUI for your hybrid meat freshness detection system.
 
-The Raspberry Pi app:
+The Raspberry Pi desktop app:
 
 - reads MQ-137, MQ-136, and MQ-135 through ADS1115 over I2C
 - computes voltage, `Rs`, and `Rs/Ro`
@@ -13,63 +13,45 @@ The Raspberry Pi app:
   - `Fresh`
   - `Neutral`
   - `Spoiled`
-- serves a mobile-friendly Flask web UI
+- runs as a local touchscreen-friendly GUI instead of a website
+- supports the physical meat-selection buttons connected to Raspberry Pi GPIO
 
-Training still stays in:
+## Main Files
 
-- `C:\Users\isaac\Downloads\chickenprok\Raspi_5_program\hybrid_ml`
-
-Deployment stays in:
-
-- `C:\Users\isaac\Downloads\chickenprok\Raspi_5_program\raspi`
-
-## Files
-
-- `config.py`
-  - all editable constants in one place
-  - ADS1115 config
-  - RL and RO values
-  - warm-up and stabilization settings
-  - artifact paths
-  - camera folder
-  - Flask host and port
-- `sensor_reader.py`
-  - reads ADS1115
-  - averages multiple readings
-  - computes voltage, `Rs`, and `Rs/Ro`
-  - provides stabilized sensor windows
-- `camera_capture.py`
-  - captures images from Picamera2
-  - falls back to OpenCV camera capture if enabled
-- `feature_extractor.py`
-  - reuses the exact training-time OpenCV feature extractor
-- `predict_live.py`
-  - loads the trained artifacts
-  - builds a training-compatible feature row
-  - runs live prediction
-  - appends prediction logs
 - `app.py`
-  - Flask UI and live API routes
+  - main touchscreen GUI
+  - full-screen layout
+  - on-screen meat type display and selection
+  - physical GPIO meat button support
+  - stabilize sensors
+  - capture image
+  - predict freshness
+  - live debug log
+- `config.py`
+  - editable constants and paths
+- `sensor_reader.py`
+  - ADS1115 + MQ logic
+- `camera_capture.py`
+  - Pi camera capture
+- `feature_extractor.py`
+  - exact training-compatible image features
+- `predict_live.py`
+  - live hybrid inference
 - `requirements.txt`
   - Python dependencies
-- `templates/index.html`
-  - responsive browser UI
-- `static/app.css`
-  - styling
 
 ## Model Folder
 
-The saved training results now live in:
+The trained model outputs live here:
 
 - `C:\Users\isaac\Downloads\chickenprok\Raspi_5_program\model`
 
-That folder contains the deployed model files such as:
+Important files:
 
 - `hybrid_freshness_model.joblib`
 - `freshness_label_encoder.joblib`
 - `hybrid_preprocessor.joblib`
 - `training_metadata.json`
-- evaluation reports and confusion matrices
 
 ## Important Compatibility Note
 
@@ -79,16 +61,29 @@ It keeps inference compatible by:
 
 - reusing the exact training image feature extraction logic from `hybrid_pipeline_utils.py`
 - using the same saved artifacts from `..\model`
-- rebuilding the sensor summary feature names expected by the trained pipeline
+- rebuilding the same sensor summary feature names expected by the trained pipeline
 - reindexing the live feature row to the exact feature order stored in the fitted preprocessor
 
 ## Install Dependencies
 
-Create or activate your Python environment, then run:
+On Raspberry Pi:
 
-```powershell
-cd C:\Users\isaac\Downloads\chickenprok\Raspi_5_program\raspi
-pip install -r requirements.txt
+```bash
+cd ~/Documents/Meat/raspi
+python3 -m pip install -r requirements.txt
+```
+
+If Tkinter is missing:
+
+```bash
+sudo apt update
+sudo apt install -y python3-tk
+```
+
+If Picamera2 is missing:
+
+```bash
+sudo apt install -y python3-picamera2
 ```
 
 ## Enable I2C On Raspberry Pi
@@ -103,30 +98,23 @@ sudo raspi-config
 
 `Interface Options -> I2C -> Enable`
 
-3. Reboot the Pi:
+3. Reboot:
 
 ```bash
 sudo reboot
 ```
 
-4. Verify the ADS1115 appears:
+4. Check the ADS1115:
 
 ```bash
 sudo i2cdetect -y 1
 ```
 
-You should normally see address `48` for the ADS1115 if wiring is correct.
+You should usually see `48`.
 
 ## Camera Setup
 
-For Raspberry Pi OS with Picamera2:
-
-```bash
-sudo apt update
-sudo apt install -y python3-picamera2
-```
-
-If needed, test the camera first:
+Test the camera first:
 
 ```bash
 libcamera-still -o test.jpg
@@ -134,11 +122,11 @@ libcamera-still -o test.jpg
 
 ## Where To Edit RL And RO
 
-Edit these values in:
+Edit these constants in:
 
-- `C:\Users\isaac\Downloads\chickenprok\Raspi_5_program\raspi\config.py`
+- `config.py`
 
-Main constants:
+Main values:
 
 - `RL_NH3_KOHM`
 - `RL_H2S_KOHM`
@@ -147,92 +135,56 @@ Main constants:
 - `RO_H2S_KOHM`
 - `RO_VOC_KOHM`
 
-If you recalibrate sensors later, update the `RO_*` values there.
-
-## Run The Flask App
-
-```powershell
-cd C:\Users\isaac\Downloads\chickenprok\Raspi_5_program\raspi
-python app.py
-```
-
-By default the app runs on:
-
-- Host: `0.0.0.0`
-- Port: `5000`
-
-Those can also be changed in `config.py`.
-
-## Access The Web UI From Another Device
-
-Find the Raspberry Pi IP address:
+## Run The GUI App
 
 ```bash
-hostname -I
+cd ~/Documents/Meat/raspi
+python3 app.py
 ```
 
-Then open this on a phone or laptop connected to the same network:
+The GUI opens directly on the Raspberry Pi screen.
 
-```text
-http://<raspberry-pi-ip>:5000
-```
-
-Example:
-
-```text
-http://192.168.1.25:5000
-```
-
-## App Flow
+## GUI Flow
 
 1. Power on the Raspberry Pi and sensors.
 2. Wait for warm-up to finish.
-3. Open the Flask UI in a browser.
-4. Optionally capture a baseline for debug reference.
-5. Click `Stabilize Sensors`.
-6. Click `Capture Image`.
-7. Select the meat type.
-8. Click `Predict Freshness`.
+3. Select the meat type: Chicken, Pork, or Beef.
+   - this can be done with the physical GPIO buttons
+   - the on-screen buttons are still available as backup
+4. Optionally capture a baseline.
+5. Tap `Stabilize Sensors`.
+6. Tap `Capture Image`.
+7. Tap `Predict Freshness`.
 
-The app blocks prediction until:
+The app does not allow a real prediction until:
 
 - warm-up is complete
 - sensors are stabilized
 - an image has been captured
 
-## Debug And Test Routes
+## What The GUI Shows
 
-The app includes these helpful routes:
-
-- `GET /api/test-sensors`
-  - reads live sensors once
-- `POST /api/capture-baseline`
-  - captures a temporary baseline for display/debugging only
-- `POST /api/test-camera`
-  - captures one test image
-- `POST /api/test-inference/<meat_type>`
-  - runs full inference using the latest stabilized sensor snapshot and latest captured image
-
-## Prediction Logging
-
-Each prediction is appended to:
-
-- `C:\Users\isaac\Downloads\chickenprok\Raspi_5_program\raspi\logs\prediction_log.csv`
-
-Logged fields:
-
-- timestamp
-- meat type
-- image path
-- `nh3_ratio`
-- `h2s_ratio`
-- `voc_ratio`
+- current app state
+- warm-up status
+- physical button status
+- live NH3, H2S, and VOC ratios
+- voltage and `Rs` values for debugging
+- baseline snapshot
+- captured image preview
 - predicted freshness
-- confidence
+- confidence indicator
+- class score breakdown
+- live debug log
 
 ## Notes
 
-- The old ESP32 code was used only as reference for the sensor math and sampling flow.
-- The current trained model is an SVM selected from grouped cross-validation.
-- If the UI shows confidence without true `predict_proba`, it is an approximate score derived from the SVM decision function and should be treated as a confidence indicator, not a calibrated probability.
-- Baseline capture is for operator awareness and debugging only. It is not injected into the trained model input by default.
+- The current UI is native, not browser-based.
+- Press `Esc` to leave full-screen mode.
+- Default physical button mapping is:
+  - Chicken = GPIO17
+  - Pork = GPIO27
+  - Beef = GPIO22
+- Those GPIO mappings can be changed in `config.py`.
+- The confidence shown for the SVM model may be an approximate confidence derived from decision scores if true probability output is unavailable.
+- Prediction logs are still saved to:
+  - `logs/prediction_log.csv`
