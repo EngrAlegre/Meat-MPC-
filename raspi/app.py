@@ -190,7 +190,7 @@ class HybridFreshnessGUI:
         panel.columnconfigure(0, weight=1)
 
         ttk.Label(panel, text="Controls", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(panel, text="Choose the meat type, stabilize sensors, capture the image, then run prediction.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 16))
+        ttk.Label(panel, text="Choose the meat type, then tap Start Scan. The system will stabilize sensors, capture the image, and predict freshness automatically.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 16))
         tk.Label(panel, textvariable=self.button_status_text, bg=self.PANEL, fg=self.INFO, anchor="w", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, sticky="w", pady=(0, 12))
 
         selector_frame = tk.Frame(panel, bg=self.PANEL)
@@ -220,12 +220,7 @@ class HybridFreshnessGUI:
         self._refresh_meat_buttons()
 
         actions = [
-            ("Capture Baseline", self.capture_baseline, "#28465f"),
-            ("Stabilize Sensors", self.stabilize_sensors, self.BUTTON_ALT),
-            ("Capture Image", self.capture_image, "#6cb8ff"),
-            ("Predict Freshness", self.predict_freshness, self.BUTTON),
-            ("Test Sensors Only", self.test_sensors_only, "#234258"),
-            ("Test Camera Only", self.test_camera_only, "#234258"),
+            ("Start Scan", self.start_scan, self.BUTTON),
             ("Exit App", self.root.destroy, "#8a3243"),
         ]
 
@@ -268,7 +263,7 @@ class HybridFreshnessGUI:
         panel.columnconfigure(0, weight=1)
 
         ttk.Label(panel, text="Live Sensors", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(panel, text="Prediction uses stabilized averaged ratios, plus voltage and Rs for debug visibility.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 14))
+        ttk.Label(panel, text="Start Scan uses stabilized averaged ratios, plus voltage and Rs for debug visibility.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 14))
 
         cards = tk.Frame(panel, bg=self.PANEL)
         cards.grid(row=2, column=0, sticky="nsew")
@@ -658,6 +653,77 @@ class HybridFreshnessGUI:
             )
 
         self._run_async("Predict freshness", work, on_success)
+
+    def start_scan(self) -> None:
+        def work():
+            with self.sensor_lock:
+                reader = self._get_sensor_reader()
+                if not reader.is_warmed_up():
+                    remaining = reader.warmup_remaining_seconds()
+                    raise RuntimeError(f"Sensors are still warming up. {remaining:.1f} seconds remaining.")
+
+                self.worker_queue.put(
+                    lambda: (
+                        self._set_state("Stabilizing", self.INFO, "#17364d"),
+                        self._set_message("Stabilizing sensors for scan...", self.INFO),
+                    )
+                )
+                sensor_snapshot = reader.stabilize()
+
+            if not sensor_snapshot.get("stable"):
+                raise RuntimeError(
+                    "Sensors are not stable yet. " + " ".join(sensor_snapshot.get("stability_reasons", []))
+                )
+
+            with self.camera_lock:
+                self.worker_queue.put(
+                    lambda: (
+                        self._set_state("Capturing Image", self.INFO, "#17364d"),
+                        self._set_message("Capturing image for scan...", self.INFO),
+                    )
+                )
+                image_path = self._get_camera_service().capture_image()
+
+            self.worker_queue.put(
+                lambda: (
+                    self._update_sensor_display(sensor_snapshot),
+                    self._update_image_preview(image_path),
+                    self._set_state("Predicting", self.INFO, "#17364d"),
+                    self._set_message("Running hybrid freshness prediction...", self.INFO),
+                )
+            )
+
+            predictor = self._get_predictor()
+            result = predictor.predict(
+                image_path=image_path,
+                meat_type=self.meat_type.get(),
+                sensor_values=sensor_snapshot["model_sensor_values"],
+            )
+            predictor.append_prediction_log(result)
+
+            return {
+                "sensor_snapshot": sensor_snapshot,
+                "image_path": image_path,
+                "prediction": {
+                    "predicted_freshness": result.predicted_freshness,
+                    "confidence": result.confidence,
+                    "confidence_note": result.confidence_note,
+                    "class_probabilities": result.class_probabilities,
+                },
+            }
+
+        def on_success(result: dict[str, Any]) -> None:
+            self.sensor_ready = True
+            self._update_sensor_display(result["sensor_snapshot"])
+            self._update_image_preview(result["image_path"])
+            self._update_prediction_display(result["prediction"])
+            self._set_state("Scan Complete", self.SUCCESS, "#184236")
+            self._set_message(
+                f"Scan complete for {self.meat_type.get()}: {result['prediction']['predicted_freshness']}",
+                self.SUCCESS,
+            )
+
+        self._run_async("Start scan", work, on_success)
 
     def run(self) -> None:
         self.root.mainloop()

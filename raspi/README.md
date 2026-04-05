@@ -23,9 +23,7 @@ The Raspberry Pi desktop app:
   - full-screen layout
   - on-screen meat type display and selection
   - physical GPIO meat button support
-  - stabilize sensors
-  - capture image
-  - predict freshness
+  - one-tap `Start Scan` flow
   - live debug log
 - `config.py`
   - editable constants and paths
@@ -151,16 +149,14 @@ The GUI opens directly on the Raspberry Pi screen.
 3. Select the meat type: Chicken, Pork, or Beef.
    - this can be done with the physical GPIO buttons
    - the on-screen buttons are still available as backup
-4. Optionally capture a baseline.
-5. Tap `Stabilize Sensors`.
-6. Tap `Capture Image`.
-7. Tap `Predict Freshness`.
+4. Tap `Start Scan`.
+5. The app automatically:
+   - stabilizes the sensors
+   - captures the image
+   - runs prediction
+6. Read the result on screen.
 
-The app does not allow a real prediction until:
-
-- warm-up is complete
-- sensors are stabilized
-- an image has been captured
+The app does not allow a real scan until warm-up is complete.
 
 ## What The GUI Shows
 
