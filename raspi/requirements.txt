@@ -5,6 +5,7 @@ pandas>=2.2
 scikit-learn>=1.5
 adafruit-blinka>=8.0
 adafruit-circuitpython-ads1x15>=2.4
+adafruit-circuitpython-dht>=4.0
 picamera2>=0.3
 Pillow>=10.0
 gpiozero>=2.0

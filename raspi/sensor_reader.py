@@ -14,11 +14,19 @@ import config
 try:
     import board
     import busio
-    import adafruit_ads1x15.ads1115 as ADS
-    from adafruit_ads1x15.analog_in import AnalogIn
 except Exception:  # pragma: no cover - hardware-specific import
     board = None
     busio = None
+
+try:
+    import adafruit_dht
+except Exception:  # pragma: no cover - hardware-specific import
+    adafruit_dht = None
+
+try:
+    import adafruit_ads1x15.ads1115 as ADS
+    from adafruit_ads1x15.analog_in import AnalogIn
+except Exception:  # pragma: no cover - hardware-specific import
     ADS = None
     AnalogIn = None
 
@@ -31,6 +39,10 @@ class SensorInitializationError(RuntimeError):
 
 
 class SensorReadError(RuntimeError):
+    pass
+
+
+class EnvironmentReadError(RuntimeError):
     pass
 
 
@@ -47,6 +59,7 @@ class MQSensorReader:
         self.boot_monotonic = time.monotonic()
         self._ads = None
         self._channels: dict[str, Any] = {}
+        self._dht_device = None
         self._initialize_ads()
 
     def _initialize_ads(self) -> None:
@@ -86,6 +99,31 @@ class MQSensorReader:
 
     def is_warmed_up(self) -> bool:
         return self.warmup_remaining_seconds() <= 0.0
+
+    def _get_dht_pin(self):
+        if board is None:
+            raise EnvironmentReadError("board library is not available for DHT22 access.")
+
+        pin_name = f"D{config.DHT22_GPIO_PIN}"
+        gpio_pin = getattr(board, pin_name, None)
+        if gpio_pin is None:
+            raise EnvironmentReadError(f"board.{pin_name} is not available for DHT22.")
+        return gpio_pin
+
+    def _get_dht_device(self):
+        if not config.DHT22_ENABLED:
+            raise EnvironmentReadError("DHT22 monitoring is disabled in config.py.")
+        if adafruit_dht is None:
+            raise EnvironmentReadError(
+                "DHT22 library is not available. Install adafruit-circuitpython-dht on the Raspberry Pi."
+            )
+        if self._dht_device is None:
+            try:
+                self._dht_device = adafruit_dht.DHT22(self._get_dht_pin(), use_pulseio=False)
+                LOGGER.info("DHT22 initialized on GPIO%d", config.DHT22_GPIO_PIN)
+            except Exception as exc:  # pragma: no cover - hardware-specific
+                raise EnvironmentReadError(f"Failed to initialize DHT22: {exc}") from exc
+        return self._dht_device
 
     def _compute_rs_kohm(self, sensor_voltage: float, load_resistance_kohm: float) -> float:
         if sensor_voltage <= 0.001:
@@ -216,6 +254,56 @@ class MQSensorReader:
         baseline["mode"] = "baseline"
         return baseline
 
+    def read_environment(self) -> dict[str, Any]:
+        if not config.DHT22_ENABLED:
+            return {
+                "available": False,
+                "temperature_c": None,
+                "humidity_percent": None,
+                "status": "DHT22 monitoring disabled.",
+            }
+
+        try:
+            dht_device = self._get_dht_device()
+        except EnvironmentReadError as exc:
+            return {
+                "available": False,
+                "temperature_c": None,
+                "humidity_percent": None,
+                "status": str(exc),
+            }
+
+        last_error: str | None = None
+        for _ in range(config.DHT22_READ_RETRIES):
+            try:
+                temperature_c = dht_device.temperature
+                humidity_percent = dht_device.humidity
+                if temperature_c is None or humidity_percent is None:
+                    raise EnvironmentReadError("DHT22 returned an empty reading.")
+
+                payload = {
+                    "available": True,
+                    "temperature_c": float(temperature_c),
+                    "humidity_percent": float(humidity_percent),
+                    "status": "DHT22 reading OK.",
+                }
+                LOGGER.debug(
+                    "Environment read | temperature=%.2fC | humidity=%.2f%%",
+                    payload["temperature_c"],
+                    payload["humidity_percent"],
+                )
+                return payload
+            except Exception as exc:  # pragma: no cover - hardware-specific
+                last_error = str(exc)
+                time.sleep(config.DHT22_RETRY_DELAY_SECONDS)
+
+        return {
+            "available": False,
+            "temperature_c": None,
+            "humidity_percent": None,
+            "status": f"DHT22 read failed: {last_error or 'unknown error'}",
+        }
+
     def to_model_sensor_values(self, values: dict[str, Any]) -> dict[str, float]:
         return {
             "nh3_ratio": float(values["nh3_ratio"]),
@@ -228,3 +316,10 @@ class MQSensorReader:
             "voc_v": float(values["voc_voltage"]),
             "voc_rs": float(values["voc_rs"]),
         }
+
+    def close(self) -> None:
+        if self._dht_device is not None:
+            try:
+                self._dht_device.exit()
+            except Exception:
+                pass

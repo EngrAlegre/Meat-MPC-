@@ -6,6 +6,7 @@ import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from threading import Lock, Thread
+import time
 from tkinter import ttk
 from typing import Any, Callable
 
@@ -75,6 +76,11 @@ class HybridFreshnessGUI:
         self.prediction_text = tk.StringVar(value="--")
         self.confidence_text = tk.StringVar(value="Confidence: --")
         self.confidence_note_text = tk.StringVar(value="No prediction yet.")
+        self.environment_values: dict[str, tk.StringVar] = {
+            "temperature_c": tk.StringVar(value="--"),
+            "humidity_percent": tk.StringVar(value="--"),
+            "status": tk.StringVar(value="DHT22 not read yet."),
+        }
 
         self.sensor_values: dict[str, tk.StringVar] = {
             "nh3_ratio": tk.StringVar(value="--"),
@@ -90,6 +96,8 @@ class HybridFreshnessGUI:
         self.latest_prediction: dict[str, Any] | None = None
         self.sensor_ready = False
         self.last_photo_image = None
+        self.environment_refresh_in_progress = False
+        self.last_environment_poll_monotonic = 0.0
 
         self._configure_styles()
         self._build_layout()
@@ -280,7 +288,7 @@ class HybridFreshnessGUI:
             ttk.Label(card, textvariable=self.sensor_values[debug_key], style="Debug.TLabel").pack(anchor="w", pady=(14, 0))
 
         notes_panel = tk.Frame(panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
-        notes_panel.grid(row=3, column=0, sticky="nsew", pady=(14, 0))
+        notes_panel.grid(row=4, column=0, sticky="nsew", pady=(14, 0))
         ttk.Label(notes_panel, text="Stability Notes", style="PanelTitle.TLabel").pack(anchor="w")
         self.stability_text = tk.Text(
             notes_panel,
@@ -294,6 +302,39 @@ class HybridFreshnessGUI:
         )
         self.stability_text.pack(fill="both", expand=True, pady=(8, 0))
         self._set_text_widget(self.stability_text, "No stabilization data yet.")
+
+        env_panel = tk.Frame(panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
+        env_panel.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+        ttk.Label(env_panel, text="Environment Monitor", style="PanelTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(
+            env_panel,
+            text="DHT22 temperature and humidity are shown for environmental context only.",
+            style="Body.TLabel",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 10))
+        env_panel.columnconfigure((0, 1), weight=1)
+
+        temp_card = tk.Frame(env_panel, bg=self.CARD, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
+        temp_card.grid(row=2, column=0, sticky="nsew", padx=(0, 8))
+        ttk.Label(temp_card, text="Temperature", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(temp_card, textvariable=self.environment_values["temperature_c"], style="Value.TLabel").pack(anchor="w", pady=(10, 2))
+        ttk.Label(temp_card, text="Celsius", style="Debug.TLabel").pack(anchor="w")
+
+        humidity_card = tk.Frame(env_panel, bg=self.CARD, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
+        humidity_card.grid(row=2, column=1, sticky="nsew")
+        ttk.Label(humidity_card, text="Humidity", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(humidity_card, textvariable=self.environment_values["humidity_percent"], style="Value.TLabel").pack(anchor="w", pady=(10, 2))
+        ttk.Label(humidity_card, text="Relative Humidity (%)", style="Debug.TLabel").pack(anchor="w")
+
+        tk.Label(
+            env_panel,
+            textvariable=self.environment_values["status"],
+            bg=self.PANEL_ALT,
+            fg=self.MUTED,
+            anchor="w",
+            justify="left",
+            wraplength=500,
+            font=("Segoe UI", 10),
+        ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
     def _build_preview_panel(self, parent: tk.Widget) -> None:
         panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
@@ -387,6 +428,7 @@ class HybridFreshnessGUI:
 
     def _schedule_status_refresh(self) -> None:
         self._update_warmup_state()
+        self._request_environment_refresh()
         self.root.after(1000, self._schedule_status_refresh)
 
     def _append_log(self, message: str) -> None:
@@ -502,6 +544,42 @@ class HybridFreshnessGUI:
             notes = "No stability notes available."
         self._set_text_widget(self.stability_text, notes)
 
+    def _update_environment_display(self, snapshot: dict[str, Any]) -> None:
+        if snapshot.get("available"):
+            self.environment_values["temperature_c"].set(f"{snapshot['temperature_c']:.1f}")
+            self.environment_values["humidity_percent"].set(f"{snapshot['humidity_percent']:.1f}")
+        else:
+            self.environment_values["temperature_c"].set("--")
+            self.environment_values["humidity_percent"].set("--")
+        self.environment_values["status"].set(snapshot.get("status", "No DHT22 status available."))
+
+    def _request_environment_refresh(self) -> None:
+        if self.environment_refresh_in_progress:
+            return
+        if (time.monotonic() - self.last_environment_poll_monotonic) < config.DHT22_REFRESH_SECONDS:
+            return
+        self.environment_refresh_in_progress = True
+
+        def worker() -> None:
+            try:
+                snapshot = self._get_sensor_reader().read_environment()
+            except Exception as exc:
+                snapshot = {
+                    "available": False,
+                    "temperature_c": None,
+                    "humidity_percent": None,
+                    "status": f"DHT22 refresh failed: {exc}",
+                }
+
+            def apply_snapshot() -> None:
+                self.environment_refresh_in_progress = False
+                self.last_environment_poll_monotonic = time.monotonic()
+                self._update_environment_display(snapshot)
+
+            self.worker_queue.put(apply_snapshot)
+
+        Thread(target=worker, daemon=True).start()
+
     def _update_image_preview(self, image_path: Path) -> None:
         self.latest_image_path = image_path
         image = Image.open(image_path).convert("RGB")
@@ -541,6 +619,7 @@ class HybridFreshnessGUI:
                     )
                 )
                 sensor_snapshot = reader.stabilize()
+                environment_snapshot = reader.read_environment()
 
             if not sensor_snapshot.get("stable"):
                 raise RuntimeError(
@@ -557,12 +636,13 @@ class HybridFreshnessGUI:
                 image_path = self._get_camera_service().capture_image()
 
             self.worker_queue.put(
-                lambda: (
-                    self._update_sensor_display(sensor_snapshot),
-                    self._update_image_preview(image_path),
-                    self._set_state("Predicting", self.INFO, "#17364d"),
-                    self._set_message("Running hybrid freshness prediction...", self.INFO),
-                )
+                    lambda: (
+                        self._update_sensor_display(sensor_snapshot),
+                        self._update_environment_display(environment_snapshot),
+                        self._update_image_preview(image_path),
+                        self._set_state("Predicting", self.INFO, "#17364d"),
+                        self._set_message("Running hybrid freshness prediction...", self.INFO),
+                    )
             )
 
             predictor = self._get_predictor()
@@ -575,6 +655,7 @@ class HybridFreshnessGUI:
 
             return {
                 "sensor_snapshot": sensor_snapshot,
+                "environment_snapshot": environment_snapshot,
                 "image_path": image_path,
                 "prediction": {
                     "predicted_freshness": result.predicted_freshness,
@@ -587,6 +668,7 @@ class HybridFreshnessGUI:
         def on_success(result: dict[str, Any]) -> None:
             self.sensor_ready = True
             self._update_sensor_display(result["sensor_snapshot"])
+            self._update_environment_display(result["environment_snapshot"])
             self._update_image_preview(result["image_path"])
             self._update_prediction_display(result["prediction"])
             self._set_state("Scan Complete", self.SUCCESS, "#184236")
@@ -604,6 +686,8 @@ class HybridFreshnessGUI:
         try:
             if self.button_controller is not None:
                 self.button_controller.close()
+            if self.sensor_reader is not None:
+                self.sensor_reader.close()
         finally:
             self.root.destroy()
 

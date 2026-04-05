@@ -5,6 +5,7 @@ This folder now contains a native Raspberry Pi touchscreen GUI for your hybrid m
 The Raspberry Pi desktop app:
 
 - reads MQ-137, MQ-136, and MQ-135 through ADS1115 over I2C
+- reads DHT22 for temperature and humidity monitoring
 - computes voltage, `Rs`, and `Rs/Ro`
 - captures images from the Raspberry Pi camera
 - extracts the exact same OpenCV image features used during training
@@ -29,6 +30,7 @@ The Raspberry Pi desktop app:
   - editable constants and paths
 - `sensor_reader.py`
   - ADS1115 + MQ logic
+  - DHT22 environmental monitoring
 - `camera_capture.py`
   - Pi camera capture
 - `feature_extractor.py`
@@ -84,6 +86,12 @@ If Picamera2 is missing:
 sudo apt install -y python3-picamera2
 ```
 
+If DHT22 support is missing:
+
+```bash
+python3 -m pip install adafruit-circuitpython-dht
+```
+
 ## Enable I2C On Raspberry Pi
 
 1. Run:
@@ -132,6 +140,8 @@ Main values:
 - `RO_NH3_KOHM`
 - `RO_H2S_KOHM`
 - `RO_VOC_KOHM`
+- `DHT22_ENABLED`
+- `DHT22_GPIO_PIN`
 
 ## Run The GUI App
 
@@ -152,6 +162,7 @@ The GUI opens directly on the Raspberry Pi screen.
 4. Tap `Start Scan`.
 5. The app automatically:
    - stabilizes the sensors
+   - reads DHT22 temperature and humidity for environmental context
    - captures the image
    - runs prediction
 6. Read the result on screen.
@@ -162,8 +173,8 @@ The app does not allow a real scan until warm-up is complete.
 
 - current app state
 - warm-up status
-- physical button status
 - live NH3, H2S, and VOC ratios
+- live temperature and humidity from DHT22
 - voltage and `Rs` values for debugging
 - captured image preview
 - predicted freshness
@@ -179,7 +190,9 @@ The app does not allow a real scan until warm-up is complete.
   - Chicken = GPIO17
   - Pork = GPIO27
   - Beef = GPIO22
+- Default DHT22 pin is GPIO4.
 - Those GPIO mappings can be changed in `config.py`.
 - The confidence shown for the SVM model may be an approximate confidence derived from decision scores if true probability output is unavailable.
+- DHT22 values are for environmental monitoring only and are not currently part of the trained model input.
 - Prediction logs are still saved to:
   - `logs/prediction_log.csv`
