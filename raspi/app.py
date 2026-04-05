@@ -87,7 +87,6 @@ class HybridFreshnessGUI:
         }
 
         self.last_sensor_snapshot: dict[str, Any] | None = None
-        self.baseline_snapshot: dict[str, Any] | None = None
         self.latest_image_path: Path | None = None
         self.latest_prediction: dict[str, Any] | None = None
         self.sensor_ready = False
@@ -263,7 +262,7 @@ class HybridFreshnessGUI:
         panel.columnconfigure(0, weight=1)
 
         ttk.Label(panel, text="Live Sensors", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(panel, text="Start Scan uses stabilized averaged ratios, plus voltage and Rs for debug visibility.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 14))
+        ttk.Label(panel, text="The scan uses stabilized averaged ratios. Voltage and Rs stay visible for verification.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 14))
 
         cards = tk.Frame(panel, bg=self.PANEL)
         cards.grid(row=2, column=0, sticky="nsew")
@@ -298,20 +297,6 @@ class HybridFreshnessGUI:
         )
         self.stability_text.pack(fill="both", expand=True, pady=(8, 0))
         self._set_text_widget(self.stability_text, "No stabilization data yet.")
-
-        baseline_panel = tk.Frame(panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
-        baseline_panel.grid(row=4, column=0, sticky="ew", pady=(14, 0))
-        ttk.Label(baseline_panel, text="Baseline Snapshot", style="PanelTitle.TLabel").pack(anchor="w")
-        self.baseline_label = tk.Label(
-            baseline_panel,
-            text="No baseline captured yet.",
-            bg=self.PANEL_ALT,
-            fg=self.MUTED,
-            justify="left",
-            anchor="w",
-            font=("Segoe UI", 10),
-        )
-        self.baseline_label.pack(fill="x", pady=(8, 0))
 
     def _build_preview_panel(self, parent: tk.Widget) -> None:
         panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
@@ -524,17 +509,6 @@ class HybridFreshnessGUI:
             notes = "No stability notes available."
         self._set_text_widget(self.stability_text, notes)
 
-    def _update_baseline_display(self, baseline: dict[str, Any]) -> None:
-        self.baseline_snapshot = baseline
-        self.baseline_label.configure(
-            text=(
-                f"NH3 {baseline['nh3_ratio']:.3f} | "
-                f"H2S {baseline['h2s_ratio']:.3f} | "
-                f"VOC {baseline['voc_ratio']:.3f} | "
-                f"Stable: {'Yes' if baseline.get('stable') else 'No'}"
-            )
-        )
-
     def _update_image_preview(self, image_path: Path) -> None:
         self.latest_image_path = image_path
         image = Image.open(image_path).convert("RGB")
@@ -558,101 +532,6 @@ class HybridFreshnessGUI:
         else:
             text = "No class score breakdown available."
         self.class_scores_label.configure(text=text)
-
-    def capture_baseline(self) -> None:
-        def work():
-            with self.sensor_lock:
-                reader = self._get_sensor_reader()
-                if not reader.is_warmed_up():
-                    remaining = reader.warmup_remaining_seconds()
-                    raise RuntimeError(f"Sensors are still warming up. {remaining:.1f} seconds remaining.")
-                return reader.capture_baseline()
-
-        def on_success(result: dict[str, Any]) -> None:
-            self._update_baseline_display(result)
-            self._set_state("Baseline Captured", self.INFO, "#17364d")
-            self._set_message("Baseline captured for debug reference.", self.SUCCESS)
-
-        self._run_async("Capture baseline", work, on_success)
-
-    def stabilize_sensors(self) -> None:
-        def work():
-            with self.sensor_lock:
-                reader = self._get_sensor_reader()
-                if not reader.is_warmed_up():
-                    remaining = reader.warmup_remaining_seconds()
-                    raise RuntimeError(f"Sensors are still warming up. {remaining:.1f} seconds remaining.")
-                return reader.stabilize()
-
-        def on_success(result: dict[str, Any]) -> None:
-            self.sensor_ready = bool(result["stable"])
-            self._update_sensor_display(result)
-            if self.sensor_ready:
-                self._set_state("Ready to Scan", self.SUCCESS, "#184236")
-                self._set_message("Sensors are stable. Ready to capture and predict.", self.SUCCESS)
-            else:
-                self._set_state("Not Ready", self.WARNING, "#4d3b1d")
-                self._set_message("Sensors are not stable yet. Check the stability notes.", self.WARNING)
-
-        self._run_async("Stabilize sensors", work, on_success)
-
-    def test_sensors_only(self) -> None:
-        def work():
-            with self.sensor_lock:
-                return self._get_sensor_reader().read_once()
-
-        def on_success(result: dict[str, Any]) -> None:
-            self._update_sensor_display(result)
-            self._set_state("Live Sensor Read", self.INFO, "#17364d")
-            self._set_message("Single sensor read completed.", self.INFO)
-
-        self._run_async("Read sensors", work, on_success)
-
-    def capture_image(self) -> None:
-        def work():
-            with self.camera_lock:
-                return self._get_camera_service().capture_image()
-
-        def on_success(result: Path) -> None:
-            self._update_image_preview(result)
-            self._set_state("Image Captured", self.INFO, "#17364d")
-            self._set_message(f"Image captured: {result.name}", self.SUCCESS)
-
-        self._run_async("Capture image", work, on_success)
-
-    def test_camera_only(self) -> None:
-        self.capture_image()
-
-    def predict_freshness(self) -> None:
-        def work():
-            if not self.sensor_ready or not self.last_sensor_snapshot:
-                raise RuntimeError("Stabilize the sensors before running prediction.")
-            if not self.latest_image_path:
-                raise RuntimeError("Capture an image before running prediction.")
-
-            predictor = self._get_predictor()
-            result = predictor.predict(
-                image_path=self.latest_image_path,
-                meat_type=self.meat_type.get(),
-                sensor_values=self.last_sensor_snapshot["model_sensor_values"],
-            )
-            predictor.append_prediction_log(result)
-            return {
-                "predicted_freshness": result.predicted_freshness,
-                "confidence": result.confidence,
-                "confidence_note": result.confidence_note,
-                "class_probabilities": result.class_probabilities,
-            }
-
-        def on_success(result: dict[str, Any]) -> None:
-            self._update_prediction_display(result)
-            self._set_state("Prediction Ready", self.SUCCESS, "#184236")
-            self._set_message(
-                f"Prediction complete for {self.meat_type.get()}: {result['predicted_freshness']}",
-                self.SUCCESS,
-            )
-
-        self._run_async("Predict freshness", work, on_success)
 
     def start_scan(self) -> None:
         def work():
@@ -719,7 +598,7 @@ class HybridFreshnessGUI:
             self._update_prediction_display(result["prediction"])
             self._set_state("Scan Complete", self.SUCCESS, "#184236")
             self._set_message(
-                f"Scan complete for {self.meat_type.get()}: {result['prediction']['predicted_freshness']}",
+                f"Scan complete. {self.meat_type.get()} is predicted as {result['prediction']['predicted_freshness']}.",
                 self.SUCCESS,
             )
 

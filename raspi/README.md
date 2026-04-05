@@ -165,7 +165,6 @@ The app does not allow a real scan until warm-up is complete.
 - physical button status
 - live NH3, H2S, and VOC ratios
 - voltage and `Rs` values for debugging
-- baseline snapshot
 - captured image preview
 - predicted freshness
 - confidence indicator
