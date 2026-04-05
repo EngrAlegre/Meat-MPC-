@@ -98,6 +98,8 @@ class HybridFreshnessGUI:
         self.last_photo_image = None
         self.environment_refresh_in_progress = False
         self.last_environment_poll_monotonic = 0.0
+        self.sensor_refresh_in_progress = False
+        self.last_sensor_poll_monotonic = 0.0
 
         self._configure_styles()
         self._build_layout()
@@ -196,7 +198,7 @@ class HybridFreshnessGUI:
         panel.columnconfigure(0, weight=1)
 
         ttk.Label(panel, text="Controls", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(panel, text="Choose the meat type, then tap Start Scan. The system will stabilize sensors, capture the image, and predict freshness automatically.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 16))
+        ttk.Label(panel, text="Choose the meat type, then tap Start Scan. The system will read the sensors, capture the image, and predict freshness automatically.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 16))
         selector_frame = tk.Frame(panel, bg=self.PANEL)
         selector_frame.grid(row=2, column=0, sticky="ew")
         ttk.Label(selector_frame, text="Meat Type", style="Body.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
@@ -267,7 +269,7 @@ class HybridFreshnessGUI:
         panel.columnconfigure(0, weight=1)
 
         ttk.Label(panel, text="Live Sensors", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(panel, text="The scan uses stabilized averaged ratios. Voltage and Rs stay visible for verification.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 14))
+        ttk.Label(panel, text="Live sensor values update automatically. The scan uses the current averaged readings plus the captured image.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 14))
 
         cards = tk.Frame(panel, bg=self.PANEL)
         cards.grid(row=2, column=0, sticky="nsew")
@@ -301,7 +303,7 @@ class HybridFreshnessGUI:
             highlightthickness=0,
         )
         self.stability_text.pack(fill="both", expand=True, pady=(8, 0))
-        self._set_text_widget(self.stability_text, "No stabilization data yet.")
+        self._set_text_widget(self.stability_text, "No sensor scan yet.")
 
         env_panel = tk.Frame(panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
         env_panel.grid(row=3, column=0, sticky="ew", pady=(14, 0))
@@ -428,6 +430,7 @@ class HybridFreshnessGUI:
 
     def _schedule_status_refresh(self) -> None:
         self._update_warmup_state()
+        self._request_live_sensor_refresh()
         self._request_environment_refresh()
         self.root.after(1000, self._schedule_status_refresh)
 
@@ -521,7 +524,7 @@ class HybridFreshnessGUI:
             else:
                 self.warmup_text.set("Warm-up complete")
                 if not self.sensor_ready:
-                    self._set_state("Stabilize Sensors", self.INFO, "#16344c")
+                    self._set_state("Ready to Scan", self.INFO, "#16344c")
         except SensorInitializationError as exc:
             self.warmup_text.set("Sensor init failed")
             self._set_message(str(exc), self.DANGER)
@@ -538,11 +541,39 @@ class HybridFreshnessGUI:
         reasons = snapshot.get("stability_reasons", [])
         if reasons:
             notes = "\n".join(f"- {reason}" for reason in reasons)
-        elif snapshot.get("stable"):
-            notes = "Sensors are stable and ready to scan."
         else:
-            notes = "No stability notes available."
+            notes = f"Live view uses {snapshot.get('ads_average_samples', config.ADS_AVERAGE_SAMPLES)} averaged sensor reads per refresh."
         self._set_text_widget(self.stability_text, notes)
+
+    def _request_live_sensor_refresh(self) -> None:
+        if self.sensor_refresh_in_progress:
+            return
+        if (time.monotonic() - self.last_sensor_poll_monotonic) < config.SENSOR_LIVE_REFRESH_SECONDS:
+            return
+        self.sensor_refresh_in_progress = True
+
+        def worker() -> None:
+            try:
+                with self.sensor_lock:
+                    snapshot = self._get_sensor_reader().read_once()
+            except Exception as exc:
+                snapshot = None
+                error_message = str(exc)
+            else:
+                error_message = None
+
+            def apply_snapshot() -> None:
+                self.sensor_refresh_in_progress = False
+                self.last_sensor_poll_monotonic = time.monotonic()
+                if snapshot is not None:
+                    self._update_sensor_display(snapshot)
+                elif error_message and "Failed to initialize ADS1115" in error_message:
+                    # Keep the UI quiet while the hardware is still being fixed.
+                    pass
+
+            self.worker_queue.put(apply_snapshot)
+
+        Thread(target=worker, daemon=True).start()
 
     def _update_environment_display(self, snapshot: dict[str, Any]) -> None:
         if snapshot.get("available"):
@@ -614,17 +645,13 @@ class HybridFreshnessGUI:
 
                 self.worker_queue.put(
                     lambda: (
-                        self._set_state("Stabilizing", self.INFO, "#17364d"),
-                        self._set_message("Stabilizing sensors for scan...", self.INFO),
+                        self._set_state("Reading Sensors", self.INFO, "#17364d"),
+                        self._set_message("Reading sensors for scan...", self.INFO),
                     )
                 )
-                sensor_snapshot = reader.stabilize()
+                sensor_snapshot = reader.read_once()
+                sensor_snapshot["model_sensor_values"] = reader.to_model_sensor_values(sensor_snapshot)
                 environment_snapshot = reader.read_environment()
-
-            if not sensor_snapshot.get("stable"):
-                raise RuntimeError(
-                    "Sensors are not stable yet. " + " ".join(sensor_snapshot.get("stability_reasons", []))
-                )
 
             with self.camera_lock:
                 self.worker_queue.put(

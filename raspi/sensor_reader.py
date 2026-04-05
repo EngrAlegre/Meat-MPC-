@@ -77,9 +77,9 @@ class MQSensorReader:
 
             self._ads = ads
             self._channels = {
-                "nh3": AnalogIn(ads, ADS.P0),
-                "h2s": AnalogIn(ads, ADS.P1),
-                "voc": AnalogIn(ads, ADS.P2),
+                "nh3": AnalogIn(ads, config.ADS_CHANNEL_NH3),
+                "h2s": AnalogIn(ads, config.ADS_CHANNEL_H2S),
+                "voc": AnalogIn(ads, config.ADS_CHANNEL_VOC),
             }
             LOGGER.info("ADS1115 initialized at I2C address 0x%02X", config.ADS_I2C_ADDRESS)
         except Exception as exc:  # pragma: no cover - hardware-specific
