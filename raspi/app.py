@@ -50,8 +50,13 @@ class HybridFreshnessGUI:
         self.root = tk.Tk()
         self.root.title("Hybrid Meat Freshness Scanner")
         self.root.configure(bg=self.BG)
+        self.is_fullscreen = True
+        self.screen_width = self.root.winfo_screenwidth()
+        self.screen_height = self.root.winfo_screenheight()
+        self.compact_layout = self.screen_width <= 1280 or self.screen_height <= 720
         self.root.attributes("-fullscreen", True)
-        self.root.bind("<Escape>", lambda _event: self.root.attributes("-fullscreen", False))
+        self.root.bind("<Escape>", self._exit_fullscreen)
+        self.root.bind("<F11>", self._toggle_fullscreen)
         self.root.protocol("WM_DELETE_WINDOW", self._shutdown)
 
         self.sensor_lock = Lock()
@@ -133,22 +138,55 @@ class HybridFreshnessGUI:
         self.warmup_badge = tk.Label(top_status, textvariable=self.warmup_text, bg="#12283b", fg=self.MUTED, font=("Segoe UI", 10), padx=16, pady=10)
         self.warmup_badge.grid(row=0, column=1)
 
-        content = tk.Frame(self.root, bg=self.BG, padx=24, pady=8)
-        content.grid(row=1, column=0, sticky="nsew")
-        content.columnconfigure(0, weight=2)
-        content.columnconfigure(1, weight=2)
-        content.columnconfigure(2, weight=3)
-        content.rowconfigure(0, weight=1)
-        content.rowconfigure(1, weight=1)
+        content_shell = tk.Frame(self.root, bg=self.BG)
+        content_shell.grid(row=1, column=0, sticky="nsew")
+        content_shell.columnconfigure(0, weight=1)
+        content_shell.rowconfigure(0, weight=1)
 
-        self._build_controls_panel(content)
-        self._build_sensors_panel(content)
-        self._build_preview_panel(content)
-        self._build_log_panel(content)
+        self.content_canvas = tk.Canvas(
+            content_shell,
+            bg=self.BG,
+            highlightthickness=0,
+            bd=0,
+        )
+        self.content_canvas.grid(row=0, column=0, sticky="nsew")
+
+        scrollbar = ttk.Scrollbar(content_shell, orient="vertical", command=self.content_canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.content_canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.content = tk.Frame(self.content_canvas, bg=self.BG, padx=24, pady=8)
+        self.content_window = self.content_canvas.create_window((0, 0), window=self.content, anchor="nw")
+        self.content.bind(
+            "<Configure>",
+            lambda _event: self.content_canvas.configure(scrollregion=self.content_canvas.bbox("all")),
+        )
+        self.content_canvas.bind("<Configure>", self._on_canvas_configure)
+
+        if self.compact_layout:
+            self.content.columnconfigure(0, weight=1)
+            self.content.rowconfigure(0, weight=1)
+            self.content.rowconfigure(1, weight=1)
+            self.content.rowconfigure(2, weight=1)
+            self.content.rowconfigure(3, weight=1)
+        else:
+            self.content.columnconfigure(0, weight=2)
+            self.content.columnconfigure(1, weight=2)
+            self.content.columnconfigure(2, weight=3)
+            self.content.rowconfigure(0, weight=1)
+            self.content.rowconfigure(1, weight=1)
+
+        self._build_controls_panel(self.content)
+        self._build_sensors_panel(self.content)
+        self._build_preview_panel(self.content)
+        self._build_log_panel(self.content)
 
     def _build_controls_panel(self, parent: tk.Widget) -> None:
         panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
-        panel.grid(row=0, column=0, sticky="nsew", padx=(0, 12), pady=(0, 12))
+        if self.compact_layout:
+            panel.grid(row=0, column=0, sticky="nsew", pady=(0, 12))
+        else:
+            panel.grid(row=0, column=0, sticky="nsew", padx=(0, 12), pady=(0, 12))
         panel.columnconfigure(0, weight=1)
 
         ttk.Label(panel, text="Controls", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
@@ -223,7 +261,10 @@ class HybridFreshnessGUI:
 
     def _build_sensors_panel(self, parent: tk.Widget) -> None:
         panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
-        panel.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=(0, 12))
+        if self.compact_layout:
+            panel.grid(row=1, column=0, sticky="nsew", pady=(0, 12))
+        else:
+            panel.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=(0, 12))
         panel.columnconfigure(0, weight=1)
 
         ttk.Label(panel, text="Live Sensors", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
@@ -279,7 +320,10 @@ class HybridFreshnessGUI:
 
     def _build_preview_panel(self, parent: tk.Widget) -> None:
         panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
-        panel.grid(row=0, column=2, rowspan=2, sticky="nsew", pady=(0, 0))
+        if self.compact_layout:
+            panel.grid(row=2, column=0, sticky="nsew", pady=(0, 12))
+        else:
+            panel.grid(row=0, column=2, rowspan=2, sticky="nsew", pady=(0, 0))
         panel.columnconfigure(0, weight=1)
         panel.rowconfigure(1, weight=3)
 
@@ -330,7 +374,10 @@ class HybridFreshnessGUI:
 
     def _build_log_panel(self, parent: tk.Widget) -> None:
         panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
-        panel.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=(0, 12))
+        if self.compact_layout:
+            panel.grid(row=3, column=0, sticky="nsew")
+        else:
+            panel.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=(0, 12))
         panel.columnconfigure(0, weight=1)
         panel.rowconfigure(1, weight=1)
 
@@ -357,6 +404,9 @@ class HybridFreshnessGUI:
         except queue.Empty:
             pass
         self.root.after(120, self._schedule_worker_poll)
+
+    def _on_canvas_configure(self, event: tk.Event) -> None:
+        self.content_canvas.itemconfigure(self.content_window, width=event.width)
 
     def _schedule_status_refresh(self) -> None:
         self._update_warmup_state()
@@ -618,6 +668,21 @@ class HybridFreshnessGUI:
                 self.button_controller.close()
         finally:
             self.root.destroy()
+
+    def _exit_fullscreen(self, _event=None) -> None:
+        self.is_fullscreen = False
+        self.root.attributes("-fullscreen", False)
+        width = min(self.screen_width - 80, 1280)
+        height = min(self.screen_height - 120, 820)
+        self.root.geometry(f"{width}x{height}+20+20")
+        self.root.update_idletasks()
+
+    def _toggle_fullscreen(self, _event=None) -> None:
+        if self.is_fullscreen:
+            self._exit_fullscreen()
+        else:
+            self.is_fullscreen = True
+            self.root.attributes("-fullscreen", True)
 
 
 if __name__ == "__main__":
