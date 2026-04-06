@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 import config
+from PIL import Image, ImageOps
 
 try:
     from picamera2 import Picamera2
@@ -90,6 +91,30 @@ class CameraCaptureService:
             cv2.imwrite(str(image_path), frame)
             LOGGER.info("Image captured via OpenCV fallback: %s", image_path)
             return image_path
+
+        raise CameraCaptureError(
+            "No camera is available. Check the Raspberry Pi camera connection and Picamera2 setup."
+        )
+
+    def get_preview_image(self, size: tuple[int, int] | None = None) -> Image.Image:
+        size = size or config.CAMERA_PREVIEW_SIZE
+
+        if self._initialize_picamera2():
+            try:
+                frame = self._picamera2.capture_array()
+                image = Image.fromarray(frame).convert("RGB")
+                return ImageOps.contain(image, size)
+            except Exception as exc:  # pragma: no cover - hardware-specific
+                LOGGER.warning("Picamera2 preview capture failed: %s", exc)
+
+        if self._initialize_opencv_fallback():
+            success, frame = self._fallback_capture.read()
+            if not success:
+                raise CameraCaptureError("OpenCV fallback camera failed to capture a preview frame.")
+            if cv2 is not None:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(frame).convert("RGB")
+            return ImageOps.contain(image, size)
 
         raise CameraCaptureError(
             "No camera is available. Check the Raspberry Pi camera connection and Picamera2 setup."

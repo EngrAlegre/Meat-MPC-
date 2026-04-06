@@ -1,6 +1,6 @@
 # Raspberry Pi 5 Hybrid Deployment App
 
-This folder now contains a native Raspberry Pi touchscreen GUI for your hybrid meat freshness detection system.
+This folder now contains the native Raspberry Pi touchscreen GUI for `FreshTo`.
 
 The Raspberry Pi desktop app:
 
@@ -8,6 +8,7 @@ The Raspberry Pi desktop app:
 - reads DHT22 for temperature and humidity monitoring
 - computes voltage, `Rs`, and `Rs/Ro`
 - captures images from the Raspberry Pi camera
+- shows a live Raspberry Pi camera feed
 - extracts the exact same OpenCV image features used during training
 - loads the saved hybrid ML model from `..\model`
 - predicts:
@@ -22,9 +23,11 @@ The Raspberry Pi desktop app:
 - `app.py`
   - main touchscreen GUI
   - full-screen layout
-  - on-screen meat type display and selection
+  - live camera feed
+  - prediction panel
+  - visible on-screen meat labels
   - physical GPIO meat button support
-  - one-tap `Start Scan` flow
+  - automatic scan when a physical meat button is pressed
   - live debug log
 - `config.py`
   - editable constants and paths
@@ -156,30 +159,29 @@ The GUI opens directly on the Raspberry Pi screen.
 
 1. Power on the Raspberry Pi and sensors.
 2. Wait for warm-up to finish.
-3. Select the meat type: Chicken, Pork, or Beef.
-   - this can be done with the physical GPIO buttons
-   - the on-screen buttons are still available as backup
-4. Tap `Start Scan`.
-5. The app automatically:
-   - stabilizes the sensors
+3. Press the physical `Chicken`, `Pork`, or `Beef` button.
+4. The app automatically:
+   - reads the live MQ sensors
    - reads DHT22 temperature and humidity for environmental context
    - captures the image
    - runs prediction
-6. Read the result on screen.
+5. Read the result on screen.
 
+The on-screen meat buttons remain visible for reference, but they are not clickable in this prototype flow.
 The app does not allow a real scan until warm-up is complete.
 
 ## What The GUI Shows
 
 - current app state
 - warm-up status
-- live NH3, H2S, and VOC ratios
-- live temperature and humidity from DHT22
-- voltage and `Rs` values for debugging
-- captured image preview
+- live camera feed
 - predicted freshness
 - confidence indicator
 - class score breakdown
+- visible meat-type buttons for reference
+- live NH3, H2S, and VOC ratios
+- live temperature and humidity from DHT22
+- voltage and `Rs` values for debugging
 - live debug log
 
 ## Notes

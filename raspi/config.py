@@ -57,6 +57,8 @@ STABILITY_STD_LIMITS = {
 
 CAMERA_OUTPUT_DIR = CAPTURE_DIR
 CAMERA_STILL_SIZE = (1280, 720)
+CAMERA_PREVIEW_SIZE = (640, 360)
+CAMERA_PREVIEW_REFRESH_SECONDS = 0.8
 CAMERA_FILENAME_PREFIX = "capture"
 CAMERA_STARTUP_DELAY_SECONDS = 1.0
 ALLOW_OPENCV_CAMERA_FALLBACK = True
@@ -75,6 +77,16 @@ DHT22_GPIO_PIN = 4
 DHT22_READ_RETRIES = 3
 DHT22_RETRY_DELAY_SECONDS = 0.8
 DHT22_REFRESH_SECONDS = 3.0
+
+# Temporary runtime correction factors to compare Raspberry Pi live ratios
+# against the older ESP32 baseline. This affects displayed values and model
+# inputs during testing and should be reverted after comparison.
+RUNTIME_RATIO_ADJUSTMENT_ENABLED = True
+RUNTIME_RATIO_SCALE = {
+    "nh3_ratio": 0.792,
+    "h2s_ratio": 0.416,
+    "voc_ratio": 0.106,
+}
 
 
 def ensure_runtime_dirs() -> None:
