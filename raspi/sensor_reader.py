@@ -343,7 +343,6 @@ class MQSensorReader:
         feature_map = {
             "nh3_ratio": "nh3_ratio",
             "h2s_ratio": "h2s_ratio",
-            "voc_ratio": "voc_ratio",
             "nh3_v": "nh3_voltage",
             "nh3_rs": "nh3_rs",
             "h2s_v": "h2s_voltage",

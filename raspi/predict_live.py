@@ -87,6 +87,7 @@ class HybridFreshnessPredictor:
                 column
                 for column in self.sensor_metadata.get("feature_columns", [])
                 if column.startswith("sensor_")
+                and not column.startswith("sensor_voc_")
             ]
             self.sensor_centroids = self._load_sensor_centroids()
 
@@ -145,6 +146,7 @@ class HybridFreshnessPredictor:
             key: float(value)
             for key, value in sensor_values.items()
             if key.startswith("sensor_") and value is not None
+            and not key.startswith("sensor_voc_")
         }
         if direct_sensor_summary:
             return direct_sensor_summary
@@ -245,6 +247,30 @@ class HybridFreshnessPredictor:
             "Hybrid fusion of image-model probabilities and sensor nearest-class scores.",
         )
 
+    def _apply_spoiled_override(
+        self,
+        *,
+        class_probabilities: dict[str, float],
+        normalized_sensor_values: dict[str, float],
+        confidence_note: str,
+    ) -> tuple[dict[str, float], str]:
+        if not getattr(config, "SPOILED_OVERRIDE_ENABLED", False):
+            return class_probabilities, confidence_note
+
+        threshold = float(getattr(config, "SPOILED_OVERRIDE_RATIO_THRESHOLD", 0.30))
+        nh3_ratio = float(normalized_sensor_values["nh3_ratio"])
+        h2s_ratio = float(normalized_sensor_values["h2s_ratio"])
+        if nh3_ratio >= threshold and h2s_ratio >= threshold:
+            return class_probabilities, confidence_note
+
+        overridden = {label: 0.0 for label in self.target_classes}
+        overridden["Spoiled"] = 1.0
+        override_note = (
+            f"Spoiled override applied because NH3 or H2S ratio fell below "
+            f"{threshold:.2f} (NH3={nh3_ratio:.2f}, H2S={h2s_ratio:.2f})."
+        )
+        return overridden, override_note
+
     def predict(self, image_path: str | Path, meat_type: str, sensor_values: dict[str, Any]) -> LivePredictionResult:
         normalized_sensor_values = self._normalize_sensor_values(sensor_values)
         image_probabilities: dict[str, float] | None = None
@@ -257,6 +283,11 @@ class HybridFreshnessPredictor:
             sensor_probabilities = self._predict_sensor_probabilities(meat_type, sensor_values)
 
         class_probabilities, confidence_note = self._fuse_probabilities(image_probabilities, sensor_probabilities)
+        class_probabilities, confidence_note = self._apply_spoiled_override(
+            class_probabilities=class_probabilities,
+            normalized_sensor_values=normalized_sensor_values,
+            confidence_note=confidence_note,
+        )
         predicted_label = max(class_probabilities, key=class_probabilities.get)
         confidence = float(class_probabilities[predicted_label]) if class_probabilities else None
 

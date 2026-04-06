@@ -33,8 +33,8 @@ TRAINING_METADATA_PATH = MODEL_DIR / "training_metadata.json"
 # - "hybrid" fuses image-only model scores with sensor nearest-class scores
 MODEL_MODE = "hybrid"
 
-HYBRID_IMAGE_WEIGHT = 0.65
-HYBRID_SENSOR_WEIGHT = 0.35
+HYBRID_IMAGE_WEIGHT = 0.35
+HYBRID_SENSOR_WEIGHT = 0.65
 
 ADS_I2C_ADDRESS = 0x48
 ADS_GAIN = 1
@@ -99,6 +99,12 @@ RUNTIME_RATIO_SCALE = {
     "h2s_ratio": 0.3769,
     "voc_ratio": 0.1017,
 }
+
+# Product rule requested for deployment behavior:
+# if either NH3 or H2S ratio falls below the threshold, force the final result
+# to Spoiled. VOC is not used for this rule.
+SPOILED_OVERRIDE_ENABLED = True
+SPOILED_OVERRIDE_RATIO_THRESHOLD = 0.30
 
 
 def ensure_runtime_dirs() -> None:

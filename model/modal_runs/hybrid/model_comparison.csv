@@ -1,3 +1,3 @@
 modality,model_name,random_split_accuracy,grouped_split_accuracy,random_cv_accuracy_mean,random_cv_accuracy_std,grouped_cv_accuracy_mean,grouped_cv_accuracy_std
 hybrid,svm_rbf,1.0,1.0,1.0,0.0,1.0,0.0
-hybrid,random_forest,1.0,0.985494106980961,1.0,0.0,0.9951647023269871,0.00683814354728607
+hybrid,random_forest,1.0,0.9963735267452403,1.0,0.0,0.9984878695459566,0.0015405241207104394

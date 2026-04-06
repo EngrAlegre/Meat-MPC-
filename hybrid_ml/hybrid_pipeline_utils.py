@@ -12,13 +12,13 @@ import pandas as pd
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-# Use ratio-based MQ features for training so the deployment app and trained model
-# operate on the same sensor representation. Live Raspberry Pi inference currently
-# passes aligned Rs/Ro features, not raw voltage/resistance summaries.
+# Use only NH3 and H2S ratio-based MQ features for prediction so the deployment
+# app and trained model operate on the same sensor representation. VOC is still
+# available for display/debugging, but it is intentionally excluded from the
+# prediction pipeline.
 DEFAULT_SENSOR_COLUMNS = [
     "nh3_ratio",
     "h2s_ratio",
-    "voc_ratio",
 ]
 
 SENSOR_AGGREGATIONS = ("mean", "min", "max", "std")

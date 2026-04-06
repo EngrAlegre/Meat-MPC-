@@ -50,8 +50,7 @@
   ],
   "sensor_base_columns": [
     "nh3_ratio",
-    "h2s_ratio",
-    "voc_ratio"
+    "h2s_ratio"
   ],
   "target_classes": [
     "Fresh",

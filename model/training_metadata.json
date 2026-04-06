@@ -30,19 +30,14 @@
     "sensor_h2s_ratio_mean",
     "sensor_h2s_ratio_min",
     "sensor_h2s_ratio_max",
-    "sensor_h2s_ratio_std",
-    "sensor_voc_ratio_mean",
-    "sensor_voc_ratio_min",
-    "sensor_voc_ratio_max",
-    "sensor_voc_ratio_std"
+    "sensor_h2s_ratio_std"
   ],
   "categorical_columns": [
     "meat_type"
   ],
   "sensor_base_columns": [
     "nh3_ratio",
-    "h2s_ratio",
-    "voc_ratio"
+    "h2s_ratio"
   ],
   "target_classes": [
     "Fresh",

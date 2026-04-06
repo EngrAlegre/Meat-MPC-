@@ -197,5 +197,7 @@ The app does not allow a real scan until warm-up is complete.
 - The confidence shown for the SVM model may be an approximate confidence derived from decision scores if true probability output is unavailable.
 - DHT22 values are for environmental monitoring only and are not currently part of the trained model input.
 - The Raspberry Pi deployment uses a deployment sensor alignment step so live `Rs/Ro` inputs match the scale observed during training-time collection after migrating from the ESP32-based collection setup.
+- VOC is still displayed and logged for debugging, but the current prediction pipeline uses only NH3 and H2S MQ ratios on the sensor side.
+- A product-rule spoiled override is enabled: if NH3 or H2S ratio drops below `0.30`, the final result is forced to `Spoiled`.
 - Prediction logs are still saved to:
   - `logs/prediction_log.csv`
