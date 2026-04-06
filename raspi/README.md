@@ -196,5 +196,6 @@ The app does not allow a real scan until warm-up is complete.
 - Those GPIO mappings can be changed in `config.py`.
 - The confidence shown for the SVM model may be an approximate confidence derived from decision scores if true probability output is unavailable.
 - DHT22 values are for environmental monitoring only and are not currently part of the trained model input.
+- Temporary runtime ratio scaling has been removed. Live deployment now uses the true measured MQ `Rs/Ro` values directly for display and model input.
 - Prediction logs are still saved to:
   - `logs/prediction_log.csv`

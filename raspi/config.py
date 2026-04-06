@@ -78,14 +78,13 @@ DHT22_READ_RETRIES = 3
 DHT22_RETRY_DELAY_SECONDS = 0.8
 DHT22_REFRESH_SECONDS = 3.0
 
-# Temporary runtime correction factors to compare Raspberry Pi live ratios
-# against the older ESP32 baseline. This affects displayed values and model
-# inputs during testing and should be reverted after comparison.
-RUNTIME_RATIO_ADJUSTMENT_ENABLED = True
+# Runtime ratio adjustment is disabled so live deployment uses the true
+# measured Rs/Ro values directly.
+RUNTIME_RATIO_ADJUSTMENT_ENABLED = False
 RUNTIME_RATIO_SCALE = {
-    "nh3_ratio": 0.792,
-    "h2s_ratio": 0.416,
-    "voc_ratio": 0.106,
+    "nh3_ratio": 1.0,
+    "h2s_ratio": 1.0,
+    "voc_ratio": 1.0,
 }
 
 

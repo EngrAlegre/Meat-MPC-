@@ -136,13 +136,6 @@ class MQSensorReader:
             return 0.0
         return rs_kohm / ro_kohm
 
-    def _apply_ratio_adjustment(self, ratio_key: str, ratio_value: float) -> float:
-        if not getattr(config, "RUNTIME_RATIO_ADJUSTMENT_ENABLED", False):
-            return ratio_value
-        scale_map = getattr(config, "RUNTIME_RATIO_SCALE", {})
-        scale = float(scale_map.get(ratio_key, 1.0))
-        return ratio_value * scale
-
     def _read_channel_average(self, key: str, sample_count: int) -> tuple[float, float]:
         if key not in self._channels:
             raise SensorReadError(f"Unknown sensor channel key: {key}")
@@ -174,13 +167,11 @@ class MQSensorReader:
         for spec in self.sensor_specs:
             avg_raw, voltage = self._read_channel_average(spec.key, sample_count)
             rs_kohm = self._compute_rs_kohm(voltage, spec.rl_kohm)
-            raw_ratio = self._compute_ratio(rs_kohm, spec.ro_kohm)
-            ratio = self._apply_ratio_adjustment(f"{spec.key}_ratio", raw_ratio)
+            ratio = self._compute_ratio(rs_kohm, spec.ro_kohm)
 
             payload[f"{spec.key}_raw_adc"] = avg_raw
             payload[f"{spec.key}_voltage"] = voltage
             payload[f"{spec.key}_rs"] = rs_kohm
-            payload[f"{spec.key}_ratio_raw"] = raw_ratio
             payload[f"{spec.key}_ratio"] = ratio
 
         LOGGER.debug(
