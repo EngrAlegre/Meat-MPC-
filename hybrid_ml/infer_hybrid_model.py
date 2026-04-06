@@ -27,20 +27,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--h2s-ratio", type=float, required=True)
     parser.add_argument("--voc-ratio", type=float, required=True)
     parser.add_argument("--artifacts-dir", type=Path, default=default_artifact_dir)
+    parser.add_argument("--mode", choices=["sensor_only", "image_only", "hybrid"], default="hybrid")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    model_path = args.artifacts_dir / "hybrid_freshness_model.joblib"
-    encoder_path = args.artifacts_dir / "freshness_label_encoder.joblib"
-    metadata_path = args.artifacts_dir / "training_metadata.json"
+    if args.mode == "sensor_only":
+        model_path = args.artifacts_dir / "modal_runs" / "sensor_only" / "sensor_only_freshness_model.joblib"
+        encoder_path = args.artifacts_dir / "modal_runs" / "freshness_label_encoder.joblib"
+        metadata_path = args.artifacts_dir / "modal_runs" / "sensor_only" / "training_metadata.json"
+    elif args.mode == "image_only":
+        model_path = args.artifacts_dir / "modal_runs" / "image_only" / "image_only_freshness_model.joblib"
+        encoder_path = args.artifacts_dir / "modal_runs" / "freshness_label_encoder.joblib"
+        metadata_path = args.artifacts_dir / "modal_runs" / "image_only" / "training_metadata.json"
+    elif (args.artifacts_dir / "modal_runs" / "hybrid" / "hybrid_freshness_model.joblib").exists():
+        model_path = args.artifacts_dir / "modal_runs" / "hybrid" / "hybrid_freshness_model.joblib"
+        encoder_path = args.artifacts_dir / "modal_runs" / "freshness_label_encoder.joblib"
+        metadata_path = args.artifacts_dir / "modal_runs" / "hybrid" / "training_metadata.json"
+    else:
+        model_path = args.artifacts_dir / "hybrid_freshness_model.joblib"
+        encoder_path = args.artifacts_dir / "freshness_label_encoder.joblib"
+        metadata_path = args.artifacts_dir / "training_metadata.json"
 
     model = joblib.load(model_path)
     label_encoder = joblib.load(encoder_path)
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 
-    image_features = extract_image_features(args.image_path)
+    image_features = {}
+    if args.mode != "sensor_only":
+        image_features = extract_image_features(args.image_path)
     sensor_summary = sensor_values_to_summary_features(
         {
             "nh3_ratio": args.nh3_ratio,
@@ -55,10 +71,12 @@ def main() -> None:
     row.update(sensor_summary)
     row["meat_type"] = args.meat_type
 
-    feature_row = pd.DataFrame([row])
+    feature_columns = list(model.named_steps["preprocessor"].feature_names_in_)
+    feature_row = pd.DataFrame([{column: row.get(column, pd.NA) for column in feature_columns}], columns=feature_columns)
     predicted_index = model.predict(feature_row)[0]
     predicted_label = label_encoder.inverse_transform([predicted_index])[0]
 
+    print(f"Mode: {args.mode}")
     print(f"Predicted freshness: {predicted_label}")
 
     classifier = model.named_steps["classifier"]

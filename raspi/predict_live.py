@@ -47,7 +47,8 @@ class LivePredictionResult:
 
 class HybridFreshnessPredictor:
     def __init__(self, artifacts_dir: Path | None = None) -> None:
-        self.artifacts_dir = artifacts_dir or config.MODEL_DIR
+        self.mode = getattr(config, "MODEL_MODE", "hybrid")
+        self.artifacts_dir = artifacts_dir or self._resolve_artifacts_dir()
         self.model = None
         self.label_encoder = None
         self.metadata: dict[str, Any] = {}
@@ -55,18 +56,47 @@ class HybridFreshnessPredictor:
         self.feature_columns: list[str] = []
         self._load_artifacts()
 
+    def _resolve_artifacts_dir(self) -> Path:
+        candidate = config.MODAL_RUNS_DIR / self.mode
+        if self.mode in {"sensor_only", "image_only", "hybrid"} and candidate.exists():
+            return candidate
+        return config.MODEL_DIR
+
+    def _resolve_artifact_paths(self) -> tuple[Path, Path, Path]:
+        if self.mode == "sensor_only":
+            return (
+                self.artifacts_dir / "sensor_only_freshness_model.joblib",
+                config.MODAL_RUNS_DIR / "freshness_label_encoder.joblib",
+                self.artifacts_dir / "training_metadata.json",
+            )
+        if self.mode == "image_only":
+            return (
+                self.artifacts_dir / "image_only_freshness_model.joblib",
+                config.MODAL_RUNS_DIR / "freshness_label_encoder.joblib",
+                self.artifacts_dir / "training_metadata.json",
+            )
+        if self.mode == "hybrid" and self.artifacts_dir == config.MODAL_RUNS_DIR / "hybrid":
+            return (
+                self.artifacts_dir / "hybrid_freshness_model.joblib",
+                config.MODAL_RUNS_DIR / "freshness_label_encoder.joblib",
+                self.artifacts_dir / "training_metadata.json",
+            )
+        return (
+            self.artifacts_dir / "hybrid_freshness_model.joblib",
+            self.artifacts_dir / "freshness_label_encoder.joblib",
+            self.artifacts_dir / "training_metadata.json",
+        )
+
     def _load_artifacts(self) -> None:
         try:
-            model_path = self.artifacts_dir / "hybrid_freshness_model.joblib"
-            encoder_path = self.artifacts_dir / "freshness_label_encoder.joblib"
-            metadata_path = self.artifacts_dir / "training_metadata.json"
+            model_path, encoder_path, metadata_path = self._resolve_artifact_paths()
 
             self.model = joblib.load(model_path)
             self.label_encoder = joblib.load(encoder_path)
             self.metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             self.preprocessor = self.model.named_steps["preprocessor"]
             self.feature_columns = list(self.preprocessor.feature_names_in_)
-            LOGGER.info("Hybrid model artifacts loaded from %s", self.artifacts_dir)
+            LOGGER.info("Prediction artifacts loaded | mode=%s | dir=%s", self.mode, self.artifacts_dir)
         except Exception as exc:
             raise PredictionLoadError(f"Failed to load model artifacts: {exc}") from exc
 
@@ -93,7 +123,11 @@ class HybridFreshnessPredictor:
         return {key: (float(value) if value is not None else np.nan) for key, value in normalized.items()}
 
     def build_feature_frame(self, image_path: str | Path, meat_type: str, sensor_values: dict[str, Any]) -> pd.DataFrame:
-        image_features = extract_live_image_features(image_path)
+        row: dict[str, Any] = {column: np.nan for column in self.feature_columns}
+        needs_image = any(column.startswith("img_") for column in self.feature_columns)
+        image_features: dict[str, float] = {}
+        if needs_image:
+            image_features = extract_live_image_features(image_path)
         normalized_sensor_values = self._normalize_sensor_values(sensor_values)
         direct_sensor_summary = {
             key: float(value)
@@ -108,17 +142,18 @@ class HybridFreshnessPredictor:
                 base_sensor_columns=self.metadata.get("sensor_base_columns", DEFAULT_SENSOR_COLUMNS),
             )
 
-        row: dict[str, Any] = {}
-        row.update(image_features)
-        row.update(sensor_summary)
+        row.update({key: value for key, value in image_features.items() if key in row})
+        row.update({key: value for key, value in sensor_summary.items() if key in row})
         row["meat_type"] = meat_type
 
-        return pd.DataFrame([row]).reindex(columns=self.feature_columns, fill_value=np.nan)
+        return pd.DataFrame([row], columns=self.feature_columns)
 
     def predict(self, image_path: str | Path, meat_type: str, sensor_values: dict[str, Any]) -> LivePredictionResult:
         feature_frame = self.build_feature_frame(image_path, meat_type, sensor_values)
         normalized_sensor_values = self._normalize_sensor_values(sensor_values)
-        image_features = extract_live_image_features(image_path)
+        image_features: dict[str, float] = {}
+        if any(column.startswith("img_") for column in self.feature_columns):
+            image_features = extract_live_image_features(image_path)
 
         predicted_index = int(self.model.predict(feature_frame)[0])
         predicted_label = str(self.label_encoder.inverse_transform([predicted_index])[0])
@@ -188,6 +223,7 @@ class HybridFreshnessPredictor:
                 handle,
                 fieldnames=[
                     "timestamp_utc",
+                    "model_mode",
                     "meat_type",
                     "image_path",
                     "nh3_ratio_raw",
@@ -206,6 +242,7 @@ class HybridFreshnessPredictor:
             writer.writerow(
                 {
                     "timestamp_utc": result.timestamp_utc,
+                    "model_mode": self.mode,
                     "meat_type": result.meat_type,
                     "image_path": result.image_path,
                     "nh3_ratio_raw": result.raw_sensor_values["nh3_ratio_raw"],

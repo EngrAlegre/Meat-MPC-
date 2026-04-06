@@ -1,0 +1,71 @@
+{
+  "modality": "image_only",
+  "best_model_name": "random_forest",
+  "best_grouped_cv_accuracy": 1.0,
+  "feature_columns": [
+    "img_rgb_r_mean",
+    "img_rgb_r_std",
+    "img_rgb_g_mean",
+    "img_rgb_g_std",
+    "img_rgb_b_mean",
+    "img_rgb_b_std",
+    "img_hsv_h_mean",
+    "img_hsv_h_std",
+    "img_hsv_s_mean",
+    "img_hsv_s_std",
+    "img_hsv_v_mean",
+    "img_hsv_v_std",
+    "img_gray_mean",
+    "img_gray_std",
+    "img_gray_min",
+    "img_gray_max",
+    "img_laplacian_var",
+    "img_edge_density",
+    "img_gray_entropy",
+    "meat_type"
+  ],
+  "numeric_columns": [
+    "img_rgb_r_mean",
+    "img_rgb_r_std",
+    "img_rgb_g_mean",
+    "img_rgb_g_std",
+    "img_rgb_b_mean",
+    "img_rgb_b_std",
+    "img_hsv_h_mean",
+    "img_hsv_h_std",
+    "img_hsv_s_mean",
+    "img_hsv_s_std",
+    "img_hsv_v_mean",
+    "img_hsv_v_std",
+    "img_gray_mean",
+    "img_gray_std",
+    "img_gray_min",
+    "img_gray_max",
+    "img_laplacian_var",
+    "img_edge_density",
+    "img_gray_entropy"
+  ],
+  "categorical_columns": [
+    "meat_type"
+  ],
+  "sensor_base_columns": [
+    "nh3_ratio",
+    "h2s_ratio",
+    "voc_ratio"
+  ],
+  "target_classes": [
+    "Fresh",
+    "Neutral",
+    "Spoiled"
+  ],
+  "group_count": 334,
+  "sensor_window_size": 15,
+  "sensor_window_step": 15,
+  "recommended_metric": "grouped_cv_accuracy_mean",
+  "notes": [
+    "Training rows come from the Dataset folder via build_hybrid_dataset().",
+    "One row is created per image, matched with a sensor window summary from the corresponding class CSV.",
+    "Grouped CV keeps each sensor window group entirely in either train or validation folds.",
+    "Use these modality-specific runs to diagnose whether image-side or sensor-side features are causing deployment issues."
+  ]
+}

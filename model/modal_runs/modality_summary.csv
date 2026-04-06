@@ -1,0 +1,4 @@
+modality,best_model_name,best_grouped_cv_accuracy,output_dir
+sensor_only,svm_rbf,1.0,C:\Users\isaac\Downloads\chickenprok\Raspi_5_program\model\modal_runs\sensor_only
+image_only,random_forest,1.0,C:\Users\isaac\Downloads\chickenprok\Raspi_5_program\model\modal_runs\image_only
+hybrid,svm_rbf,1.0,C:\Users\isaac\Downloads\chickenprok\Raspi_5_program\model\modal_runs\hybrid

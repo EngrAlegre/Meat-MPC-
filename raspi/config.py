@@ -7,6 +7,7 @@ BASE_DIR = Path(__file__).resolve().parent
 PROGRAM_DIR = BASE_DIR.parent
 HYBRID_ML_DIR = PROGRAM_DIR / "hybrid_ml"
 MODEL_DIR = PROGRAM_DIR / "model"
+MODAL_RUNS_DIR = MODEL_DIR / "modal_runs"
 
 CAPTURE_DIR = BASE_DIR / "captures"
 LOG_DIR = BASE_DIR / "logs"
@@ -25,6 +26,14 @@ MODEL_PATH = MODEL_DIR / "hybrid_freshness_model.joblib"
 LABEL_ENCODER_PATH = MODEL_DIR / "freshness_label_encoder.joblib"
 PREPROCESSOR_PATH = MODEL_DIR / "hybrid_preprocessor.joblib"
 TRAINING_METADATA_PATH = MODEL_DIR / "training_metadata.json"
+
+# Deployment model mode:
+# - "sensor_only" uses MQ ratio summaries + meat type
+# - "image_only" uses image features + meat type
+# - "hybrid" uses image features + MQ ratio summaries + meat type
+# Default to image_only for the current deadline-safe demo because live sensor
+# alignment is still being validated against the training distribution.
+MODEL_MODE = "image_only"
 
 ADS_I2C_ADDRESS = 0x48
 ADS_GAIN = 1
