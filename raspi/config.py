@@ -78,13 +78,15 @@ DHT22_READ_RETRIES = 3
 DHT22_RETRY_DELAY_SECONDS = 0.8
 DHT22_REFRESH_SECONDS = 3.0
 
-# Runtime ratio adjustment is disabled so live deployment uses the true
-# measured Rs/Ro values directly.
-RUNTIME_RATIO_ADJUSTMENT_ENABLED = False
+# Deployment sensor alignment rescales live Raspberry Pi Rs/Ro values so they
+# stay on the same feature scale as the training-time collection setup.
+# This is not thresholding or rule-based classification; the ML model remains
+# the final decision-maker.
+RUNTIME_RATIO_ADJUSTMENT_ENABLED = True
 RUNTIME_RATIO_SCALE = {
-    "nh3_ratio": 1.0,
-    "h2s_ratio": 1.0,
-    "voc_ratio": 1.0,
+    "nh3_ratio": 0.7071,
+    "h2s_ratio": 0.3769,
+    "voc_ratio": 0.1017,
 }
 
 

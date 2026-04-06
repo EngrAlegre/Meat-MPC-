@@ -41,6 +41,7 @@ class LivePredictionResult:
     confidence_note: str
     class_probabilities: dict[str, float]
     sensor_values: dict[str, float]
+    raw_sensor_values: dict[str, float]
     image_feature_preview: dict[str, float]
 
 
@@ -72,8 +73,11 @@ class HybridFreshnessPredictor:
     def _normalize_sensor_values(self, sensor_values: dict[str, Any]) -> dict[str, float]:
         normalized = {
             "nh3_ratio": sensor_values.get("nh3_ratio"),
+            "nh3_ratio_raw": sensor_values.get("nh3_ratio_raw", sensor_values.get("nh3_ratio")),
             "h2s_ratio": sensor_values.get("h2s_ratio"),
+            "h2s_ratio_raw": sensor_values.get("h2s_ratio_raw", sensor_values.get("h2s_ratio")),
             "voc_ratio": sensor_values.get("voc_ratio"),
+            "voc_ratio_raw": sensor_values.get("voc_ratio_raw", sensor_values.get("voc_ratio")),
             "nh3_v": sensor_values.get("nh3_v", sensor_values.get("nh3_voltage")),
             "nh3_rs": sensor_values.get("nh3_rs"),
             "h2s_v": sensor_values.get("h2s_v", sensor_values.get("h2s_voltage")),
@@ -150,6 +154,11 @@ class HybridFreshnessPredictor:
             confidence_note=confidence_note,
             class_probabilities=class_probabilities,
             sensor_values=normalized_sensor_values,
+            raw_sensor_values={
+                "nh3_ratio_raw": normalized_sensor_values["nh3_ratio_raw"],
+                "h2s_ratio_raw": normalized_sensor_values["h2s_ratio_raw"],
+                "voc_ratio_raw": normalized_sensor_values["voc_ratio_raw"],
+            },
             image_feature_preview={
                 key: float(image_features[key])
                 for key in (
@@ -173,6 +182,9 @@ class HybridFreshnessPredictor:
                     "timestamp_utc",
                     "meat_type",
                     "image_path",
+                    "nh3_ratio_raw",
+                    "h2s_ratio_raw",
+                    "voc_ratio_raw",
                     "nh3_ratio",
                     "h2s_ratio",
                     "voc_ratio",
@@ -188,6 +200,9 @@ class HybridFreshnessPredictor:
                     "timestamp_utc": result.timestamp_utc,
                     "meat_type": result.meat_type,
                     "image_path": result.image_path,
+                    "nh3_ratio_raw": result.raw_sensor_values["nh3_ratio_raw"],
+                    "h2s_ratio_raw": result.raw_sensor_values["h2s_ratio_raw"],
+                    "voc_ratio_raw": result.raw_sensor_values["voc_ratio_raw"],
                     "nh3_ratio": result.sensor_values["nh3_ratio"],
                     "h2s_ratio": result.sensor_values["h2s_ratio"],
                     "voc_ratio": result.sensor_values["voc_ratio"],
