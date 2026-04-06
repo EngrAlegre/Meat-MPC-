@@ -12,18 +12,13 @@ import pandas as pd
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-# Ratios are the main valid sensor features for this project. The extra voltage and
-# resistance columns are included when present because they can add signal context.
+# Use ratio-based MQ features for training so the deployment app and trained model
+# operate on the same sensor representation. Live Raspberry Pi inference currently
+# passes aligned Rs/Ro features, not raw voltage/resistance summaries.
 DEFAULT_SENSOR_COLUMNS = [
     "nh3_ratio",
     "h2s_ratio",
     "voc_ratio",
-    "nh3_v",
-    "nh3_rs",
-    "h2s_v",
-    "h2s_rs",
-    "voc_v",
-    "voc_rs",
 ]
 
 SENSOR_AGGREGATIONS = ("mean", "min", "max", "std")
