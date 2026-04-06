@@ -161,7 +161,7 @@ The GUI opens directly on the Raspberry Pi screen.
 2. Wait for warm-up to finish.
 3. Press the physical `Chicken`, `Pork`, or `Beef` button.
 4. The app automatically:
-   - reads the live MQ sensors
+   - collects a short live MQ sensor window and summarizes it for inference
    - reads DHT22 temperature and humidity for environmental context
    - captures the image
    - runs prediction

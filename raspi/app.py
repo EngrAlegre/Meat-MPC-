@@ -454,6 +454,8 @@ class HybridFreshnessGUI:
 
     def _handle_error(self, task_name: str, exc: Exception) -> None:
         self.scan_in_progress = False
+        if task_name.lower() == "start scan":
+            self._clear_prediction_display("The latest scan failed. Please try again.")
         self._set_state("Error", self.DANGER, "#4a1f28")
         self._set_message(f"{task_name} failed: {exc}", self.DANGER)
 
@@ -661,11 +663,19 @@ class HybridFreshnessGUI:
             text = "No class score breakdown available."
         self.class_scores_label.configure(text=text)
 
+    def _clear_prediction_display(self, note: str = "Scanning in progress.") -> None:
+        self.latest_prediction = None
+        self.prediction_text.set("--")
+        self.confidence_text.set("Confidence: --")
+        self.confidence_note_text.set(note)
+        self.class_scores_label.configure(text="Waiting for a new prediction...")
+
     def start_scan(self) -> None:
         if self.scan_in_progress:
             self._set_message("A scan is already running. Please wait.", self.WARNING)
             return
         self.scan_in_progress = True
+        self._clear_prediction_display("Scanning in progress.")
 
         def work():
             with self.sensor_lock:
@@ -676,12 +686,11 @@ class HybridFreshnessGUI:
 
                 self.worker_queue.put(
                     lambda: (
-                        self._set_state("Reading Sensors", self.INFO, "#17364d"),
-                        self._set_message("Reading sensors for scan...", self.INFO),
+                        self._set_state("Collecting Scan Data", self.INFO, "#17364d"),
+                        self._set_message("Collecting sensor window for scan...", self.INFO),
                     )
                 )
-                sensor_snapshot = reader.read_once()
-                sensor_snapshot["model_sensor_values"] = reader.to_model_sensor_values(sensor_snapshot)
+                sensor_snapshot = reader.stabilize(read_count=config.SCAN_SUMMARY_READS)
                 environment_snapshot = reader.read_environment()
 
             with self.camera_lock:
@@ -704,10 +713,26 @@ class HybridFreshnessGUI:
             )
 
             predictor = self._get_predictor()
+            sensor_input = {
+                "nh3_ratio": sensor_snapshot["model_sensor_values"]["nh3_ratio"],
+                "nh3_ratio_raw": sensor_snapshot["model_sensor_values"].get("nh3_ratio_raw"),
+                "h2s_ratio": sensor_snapshot["model_sensor_values"]["h2s_ratio"],
+                "h2s_ratio_raw": sensor_snapshot["model_sensor_values"].get("h2s_ratio_raw"),
+                "voc_ratio": sensor_snapshot["model_sensor_values"]["voc_ratio"],
+                "voc_ratio_raw": sensor_snapshot["model_sensor_values"].get("voc_ratio_raw"),
+            }
+            ratio_summary_features = {
+                key: value
+                for key, value in sensor_snapshot.get("sensor_summary_features", {}).items()
+                if key.startswith("sensor_nh3_ratio_")
+                or key.startswith("sensor_h2s_ratio_")
+                or key.startswith("sensor_voc_ratio_")
+            }
+            sensor_input.update(ratio_summary_features)
             result = predictor.predict(
                 image_path=image_path,
                 meat_type=self.meat_type.get(),
-                sensor_values=sensor_snapshot["model_sensor_values"],
+                sensor_values=sensor_input,
             )
             predictor.append_prediction_log(result)
 

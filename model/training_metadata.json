@@ -1,6 +1,6 @@
 {
   "best_model_name": "svm_rbf",
-  "best_grouped_cv_accuracy": 0.9004748338081671,
+  "best_grouped_cv_accuracy": 0.9993955877908735,
   "sensor_dir": "C:\\Users\\isaac\\Downloads\\chickenprok\\Raspi_5_program\\Dataset\\MQ_Sensors_Dataset",
   "image_dir": "C:\\Users\\isaac\\Downloads\\chickenprok\\Raspi_5_program\\Dataset\\Image",
   "numeric_columns": [
@@ -81,17 +81,20 @@
   ],
   "random_split_train_rows": 2640,
   "random_split_test_rows": 660,
-  "grouped_split_train_rows": 2130,
-  "grouped_split_test_rows": 1170,
-  "group_count": 9,
-  "aggregation_strategy": "Class-level MQ sensor summary statistics (mean/min/max/std) repeated for each image in the matching class.",
+  "grouped_split_train_rows": 2197,
+  "grouped_split_test_rows": 1103,
+  "group_count": 334,
+  "aggregation_strategy": "Per-CSV MQ sensor window summary statistics (mean/min/max/std) assigned across images in the matching class.",
+  "sensor_window_size": 15,
+  "sensor_window_step": 15,
   "recommended_thesis_metric": "grouped_cv_accuracy_mean",
   "notes": [
     "One row is created per image.",
     "MQ sensor CSVs are matched to image folders by meat type and freshness label.",
+    "Each class CSV is split into multiple sensor windows before aggregation so the model sees more than one sensor prototype per class.",
     "Neutral CSVs may contain only ratio columns; missing voltage/resistance summaries are imputed.",
     "Meat type is included as a known categorical feature because it is available at inference time.",
-    "Random split is optimistic because repeated class-level sensor summaries appear in both train and test when images from the same class are mixed.",
-    "Grouped split and grouped CV are more realistic because each sensor-source group is kept entirely in either train or validation/test."
+    "Random split is optimistic because repeated image-side patterns can still appear across train and test.",
+    "Grouped split and grouped CV are more realistic because each sensor window group is kept entirely in either train or validation/test."
   ]
 }

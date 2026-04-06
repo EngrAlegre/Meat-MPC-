@@ -23,6 +23,8 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
 from sklearn.svm import SVC
 
 from hybrid_pipeline_utils import (
+    DEFAULT_SENSOR_WINDOW_SIZE,
+    DEFAULT_SENSOR_WINDOW_STEP,
     DEFAULT_SENSOR_COLUMNS,
     build_hybrid_dataset,
     save_json,
@@ -44,6 +46,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--cv-folds", type=int, default=5)
+    parser.add_argument("--sensor-window-size", type=int, default=DEFAULT_SENSOR_WINDOW_SIZE)
+    parser.add_argument("--sensor-window-step", type=int, default=DEFAULT_SENSOR_WINDOW_STEP)
     return parser.parse_args()
 
 
@@ -214,15 +218,34 @@ def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    hybrid_df = build_hybrid_dataset(args.sensor_dir, args.image_dir, base_sensor_columns=DEFAULT_SENSOR_COLUMNS)
+    hybrid_df = build_hybrid_dataset(
+        args.sensor_dir,
+        args.image_dir,
+        base_sensor_columns=DEFAULT_SENSOR_COLUMNS,
+        sensor_window_size=args.sensor_window_size,
+        sensor_window_step=args.sensor_window_step,
+    )
     hybrid_df.to_csv(args.output_dir / "hybrid_dataset.csv", index=False)
 
     target_encoder = LabelEncoder()
     target = target_encoder.fit_transform(hybrid_df["freshness_label"])
     target_names = list(target_encoder.classes_)
-    groups = hybrid_df["sensor_source_file"].astype(str).to_numpy()
+    groups = hybrid_df["sensor_source_group"].astype(str).to_numpy()
 
-    feature_frame = hybrid_df.drop(columns=["freshness_label", "image_path", "image_folder", "sensor_source_file"])
+    feature_frame = hybrid_df.drop(
+        columns=[
+            "freshness_label",
+            "image_path",
+            "image_folder",
+            "sensor_source_file",
+            "sensor_source_group",
+            "sensor_window_index",
+            "sensor_window_start",
+            "sensor_window_end",
+            "image_index_within_class",
+        ],
+        errors="ignore",
+    )
     preprocessor, numeric_columns, categorical_columns = build_preprocessor(feature_frame)
 
     x_train_random, x_test_random, y_train_random, y_test_random = train_test_split(
@@ -253,7 +276,7 @@ def main() -> None:
     print("Class distribution:")
     print(hybrid_df["freshness_label"].value_counts().sort_index())
     print("Group distribution by sensor source:")
-    print(hybrid_df["sensor_source_file"].value_counts())
+    print(hybrid_df["sensor_source_group"].value_counts())
     print()
 
     for model_name, classifier in models.items():
@@ -360,15 +383,18 @@ def main() -> None:
         "grouped_split_train_rows": int(len(x_train_grouped)),
         "grouped_split_test_rows": int(len(x_test_grouped)),
         "group_count": int(len(np.unique(groups))),
-        "aggregation_strategy": "Class-level MQ sensor summary statistics (mean/min/max/std) repeated for each image in the matching class.",
+        "aggregation_strategy": "Per-CSV MQ sensor window summary statistics (mean/min/max/std) assigned across images in the matching class.",
+        "sensor_window_size": int(args.sensor_window_size),
+        "sensor_window_step": int(args.sensor_window_step),
         "recommended_thesis_metric": "grouped_cv_accuracy_mean",
         "notes": [
             "One row is created per image.",
             "MQ sensor CSVs are matched to image folders by meat type and freshness label.",
+            "Each class CSV is split into multiple sensor windows before aggregation so the model sees more than one sensor prototype per class.",
             "Neutral CSVs may contain only ratio columns; missing voltage/resistance summaries are imputed.",
             "Meat type is included as a known categorical feature because it is available at inference time.",
-            "Random split is optimistic because repeated class-level sensor summaries appear in both train and test when images from the same class are mixed.",
-            "Grouped split and grouped CV are more realistic because each sensor-source group is kept entirely in either train or validation/test.",
+            "Random split is optimistic because repeated image-side patterns can still appear across train and test.",
+            "Grouped split and grouped CV are more realistic because each sensor window group is kept entirely in either train or validation/test.",
         ],
     }
     save_json(metadata, args.output_dir / "training_metadata.json")

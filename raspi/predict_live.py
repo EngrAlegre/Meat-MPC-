@@ -95,10 +95,18 @@ class HybridFreshnessPredictor:
     def build_feature_frame(self, image_path: str | Path, meat_type: str, sensor_values: dict[str, Any]) -> pd.DataFrame:
         image_features = extract_live_image_features(image_path)
         normalized_sensor_values = self._normalize_sensor_values(sensor_values)
-        sensor_summary = sensor_values_to_summary_features(
-            normalized_sensor_values,
-            base_sensor_columns=self.metadata.get("sensor_base_columns", DEFAULT_SENSOR_COLUMNS),
-        )
+        direct_sensor_summary = {
+            key: float(value)
+            for key, value in sensor_values.items()
+            if key.startswith("sensor_") and value is not None
+        }
+        if direct_sensor_summary:
+            sensor_summary = direct_sensor_summary
+        else:
+            sensor_summary = sensor_values_to_summary_features(
+                normalized_sensor_values,
+                base_sensor_columns=self.metadata.get("sensor_base_columns", DEFAULT_SENSOR_COLUMNS),
+            )
 
         row: dict[str, Any] = {}
         row.update(image_features)

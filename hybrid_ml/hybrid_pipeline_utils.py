@@ -27,6 +27,8 @@ DEFAULT_SENSOR_COLUMNS = [
 ]
 
 SENSOR_AGGREGATIONS = ("mean", "min", "max", "std")
+DEFAULT_SENSOR_WINDOW_SIZE = 15
+DEFAULT_SENSOR_WINDOW_STEP = 15
 
 
 @dataclass(frozen=True)
@@ -185,13 +187,76 @@ def load_sensor_summaries(sensor_dir: str | Path, base_columns: Iterable[str] | 
     return summaries
 
 
+def load_sensor_window_summaries(
+    sensor_dir: str | Path,
+    base_columns: Iterable[str] | None = None,
+    window_size: int = DEFAULT_SENSOR_WINDOW_SIZE,
+    window_step: int = DEFAULT_SENSOR_WINDOW_STEP,
+) -> dict[ClassKey, list[dict[str, float]]]:
+    sensor_dir = resolve_existing_path(sensor_dir)
+    summaries: dict[ClassKey, list[dict[str, float]]] = {}
+    base_columns = list(base_columns or DEFAULT_SENSOR_COLUMNS)
+    window_size = max(1, int(window_size))
+    window_step = max(1, int(window_step))
+
+    for csv_path in sorted(sensor_dir.glob("*.csv")):
+        frame = _read_sensor_csv(csv_path)
+        class_key = _infer_class_key_from_sensor_csv(csv_path, frame)
+        class_windows: list[dict[str, float]] = []
+
+        if len(frame) <= window_size:
+            summary = aggregate_sensor_frame(frame, base_columns=base_columns)
+            summary["sensor_source_file"] = str(csv_path)
+            summary["sensor_source_group"] = f"{csv_path}::window_0"
+            summary["sensor_window_index"] = 0
+            summary["sensor_window_start"] = 0
+            summary["sensor_window_end"] = int(len(frame) - 1)
+            class_windows.append(summary)
+        else:
+            window_index = 0
+            max_start = len(frame) - window_size
+            for start in range(0, max_start + 1, window_step):
+                window_frame = frame.iloc[start : start + window_size].reset_index(drop=True)
+                summary = aggregate_sensor_frame(window_frame, base_columns=base_columns)
+                summary["sensor_source_file"] = str(csv_path)
+                summary["sensor_source_group"] = f"{csv_path}::window_{window_index}"
+                summary["sensor_window_index"] = int(window_index)
+                summary["sensor_window_start"] = int(start)
+                summary["sensor_window_end"] = int(start + len(window_frame) - 1)
+                class_windows.append(summary)
+                window_index += 1
+
+            if not class_windows:
+                summary = aggregate_sensor_frame(frame, base_columns=base_columns)
+                summary["sensor_source_file"] = str(csv_path)
+                summary["sensor_source_group"] = f"{csv_path}::window_0"
+                summary["sensor_window_index"] = 0
+                summary["sensor_window_start"] = 0
+                summary["sensor_window_end"] = int(len(frame) - 1)
+                class_windows.append(summary)
+
+        summaries[class_key] = class_windows
+
+    if not summaries:
+        raise FileNotFoundError(f"No sensor CSV files found in {sensor_dir}")
+
+    return summaries
+
+
 def build_hybrid_dataset(
     sensor_dir: str | Path,
     image_dir: str | Path,
     base_sensor_columns: Iterable[str] | None = None,
+    sensor_window_size: int = DEFAULT_SENSOR_WINDOW_SIZE,
+    sensor_window_step: int = DEFAULT_SENSOR_WINDOW_STEP,
 ) -> pd.DataFrame:
     image_dir = resolve_existing_path(image_dir)
-    sensor_summaries = load_sensor_summaries(sensor_dir, base_columns=base_sensor_columns)
+    sensor_summaries = load_sensor_window_summaries(
+        sensor_dir,
+        base_columns=base_sensor_columns,
+        window_size=sensor_window_size,
+        window_step=sensor_window_step,
+    )
 
     rows: list[dict[str, Any]] = []
     for folder in sorted(path for path in image_dir.iterdir() if path.is_dir()):
@@ -205,14 +270,17 @@ def build_hybrid_dataset(
                 f"Expected a CSV for class key '{class_key.slug}'."
             )
 
-        sensor_features = sensor_summaries[class_key]
-        for image_path in list_image_files(folder):
+        sensor_feature_windows = sensor_summaries[class_key]
+        image_files = list_image_files(folder)
+        for image_index, image_path in enumerate(image_files):
             image_features = extract_image_features(image_path)
+            sensor_features = sensor_feature_windows[image_index % len(sensor_feature_windows)]
             row: dict[str, Any] = {}
             row.update(image_features)
             row.update(sensor_features)
             row["image_path"] = str(image_path)
             row["image_folder"] = folder.name
+            row["image_index_within_class"] = int(image_index)
             row["meat_type"] = class_key.meat_type
             row["freshness_label"] = class_key.freshness
             rows.append(row)

@@ -222,6 +222,12 @@ class MQSensorReader:
             "nh3_rs",
             "h2s_rs",
             "voc_rs",
+            "nh3_ratio_raw",
+            "h2s_ratio_raw",
+            "voc_ratio_raw",
+            "nh3_ratio_adjusted",
+            "h2s_ratio_adjusted",
+            "voc_ratio_adjusted",
             "nh3_ratio",
             "h2s_ratio",
             "voc_ratio",
@@ -232,6 +238,8 @@ class MQSensorReader:
             if not values:
                 continue
             aggregated[key] = float(np.mean(values))
+            aggregated[f"{key}_min"] = float(np.min(values))
+            aggregated[f"{key}_max"] = float(np.max(values))
             aggregated[f"{key}_std"] = float(np.std(values))
 
         if read_count < config.STABILIZATION_MIN_READS:
@@ -249,6 +257,7 @@ class MQSensorReader:
                 )
 
         aggregated["model_sensor_values"] = self.to_model_sensor_values(aggregated)
+        aggregated["sensor_summary_features"] = self._build_model_summary_features_from_samples(samples)
 
         LOGGER.info(
             "Stabilized sensor window | stable=%s | nh3_ratio=%.4f | h2s_ratio=%.4f | voc_ratio=%.4f",
@@ -317,8 +326,11 @@ class MQSensorReader:
     def to_model_sensor_values(self, values: dict[str, Any]) -> dict[str, float]:
         return {
             "nh3_ratio": float(values["nh3_ratio"]),
+            "nh3_ratio_raw": float(values.get("nh3_ratio_raw", values["nh3_ratio"])),
             "h2s_ratio": float(values["h2s_ratio"]),
+            "h2s_ratio_raw": float(values.get("h2s_ratio_raw", values["h2s_ratio"])),
             "voc_ratio": float(values["voc_ratio"]),
+            "voc_ratio_raw": float(values.get("voc_ratio_raw", values["voc_ratio"])),
             "nh3_v": float(values["nh3_voltage"]),
             "nh3_rs": float(values["nh3_rs"]),
             "h2s_v": float(values["h2s_voltage"]),
@@ -326,6 +338,32 @@ class MQSensorReader:
             "voc_v": float(values["voc_voltage"]),
             "voc_rs": float(values["voc_rs"]),
         }
+
+    def _build_model_summary_features_from_samples(self, samples: list[dict[str, Any]]) -> dict[str, float]:
+        feature_map = {
+            "nh3_ratio": "nh3_ratio",
+            "h2s_ratio": "h2s_ratio",
+            "voc_ratio": "voc_ratio",
+            "nh3_v": "nh3_voltage",
+            "nh3_rs": "nh3_rs",
+            "h2s_v": "h2s_voltage",
+            "h2s_rs": "h2s_rs",
+            "voc_v": "voc_voltage",
+            "voc_rs": "voc_rs",
+        }
+        summary: dict[str, float] = {}
+
+        for feature_name, sample_key in feature_map.items():
+            values = [float(sample[sample_key]) for sample in samples if sample_key in sample]
+            if not values:
+                continue
+            values_np = np.asarray(values, dtype=float)
+            summary[f"sensor_{feature_name}_mean"] = float(np.mean(values_np))
+            summary[f"sensor_{feature_name}_min"] = float(np.min(values_np))
+            summary[f"sensor_{feature_name}_max"] = float(np.max(values_np))
+            summary[f"sensor_{feature_name}_std"] = float(np.std(values_np))
+
+        return summary
 
     def close(self) -> None:
         if self._dht_device is not None:
