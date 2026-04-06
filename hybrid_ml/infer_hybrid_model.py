@@ -1,23 +1,20 @@
 from __future__ import annotations
 
 import argparse
-import json
+import sys
 from pathlib import Path
 
-import joblib
-import pandas as pd
 
-from hybrid_pipeline_utils import (
-    DEFAULT_SENSOR_COLUMNS,
-    extract_image_features,
-    sensor_values_to_summary_features,
-)
+ROOT_DIR = Path(__file__).resolve().parents[1]
+RASPI_DIR = ROOT_DIR / "raspi"
+if str(RASPI_DIR) not in sys.path:
+    sys.path.insert(0, str(RASPI_DIR))
+
+import config as raspi_config
+from predict_live import HybridFreshnessPredictor
 
 
 def parse_args() -> argparse.Namespace:
-    root_dir = Path(__file__).resolve().parents[1]
-    default_artifact_dir = root_dir / "model"
-
     parser = argparse.ArgumentParser(
         description="Run inference for one image + one MQ sensor reading row."
     )
@@ -26,64 +23,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--nh3-ratio", type=float, required=True)
     parser.add_argument("--h2s-ratio", type=float, required=True)
     parser.add_argument("--voc-ratio", type=float, required=True)
-    parser.add_argument("--artifacts-dir", type=Path, default=default_artifact_dir)
     parser.add_argument("--mode", choices=["sensor_only", "image_only", "hybrid"], default="hybrid")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.mode == "sensor_only":
-        model_path = args.artifacts_dir / "modal_runs" / "sensor_only" / "sensor_only_freshness_model.joblib"
-        encoder_path = args.artifacts_dir / "modal_runs" / "freshness_label_encoder.joblib"
-        metadata_path = args.artifacts_dir / "modal_runs" / "sensor_only" / "training_metadata.json"
-    elif args.mode == "image_only":
-        model_path = args.artifacts_dir / "modal_runs" / "image_only" / "image_only_freshness_model.joblib"
-        encoder_path = args.artifacts_dir / "modal_runs" / "freshness_label_encoder.joblib"
-        metadata_path = args.artifacts_dir / "modal_runs" / "image_only" / "training_metadata.json"
-    elif (args.artifacts_dir / "modal_runs" / "hybrid" / "hybrid_freshness_model.joblib").exists():
-        model_path = args.artifacts_dir / "modal_runs" / "hybrid" / "hybrid_freshness_model.joblib"
-        encoder_path = args.artifacts_dir / "modal_runs" / "freshness_label_encoder.joblib"
-        metadata_path = args.artifacts_dir / "modal_runs" / "hybrid" / "training_metadata.json"
-    else:
-        model_path = args.artifacts_dir / "hybrid_freshness_model.joblib"
-        encoder_path = args.artifacts_dir / "freshness_label_encoder.joblib"
-        metadata_path = args.artifacts_dir / "training_metadata.json"
+    raspi_config.MODEL_MODE = args.mode
+    predictor = HybridFreshnessPredictor()
 
-    model = joblib.load(model_path)
-    label_encoder = joblib.load(encoder_path)
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-
-    image_features = {}
-    if args.mode != "sensor_only":
-        image_features = extract_image_features(args.image_path)
-    sensor_summary = sensor_values_to_summary_features(
-        {
+    result = predictor.predict(
+        image_path=args.image_path,
+        meat_type=args.meat_type,
+        sensor_values={
             "nh3_ratio": args.nh3_ratio,
             "h2s_ratio": args.h2s_ratio,
             "voc_ratio": args.voc_ratio,
         },
-        base_sensor_columns=metadata.get("sensor_base_columns", DEFAULT_SENSOR_COLUMNS),
     )
 
-    row = {}
-    row.update(image_features)
-    row.update(sensor_summary)
-    row["meat_type"] = args.meat_type
-
-    feature_columns = list(model.named_steps["preprocessor"].feature_names_in_)
-    feature_row = pd.DataFrame([{column: row.get(column, pd.NA) for column in feature_columns}], columns=feature_columns)
-    predicted_index = model.predict(feature_row)[0]
-    predicted_label = label_encoder.inverse_transform([predicted_index])[0]
-
     print(f"Mode: {args.mode}")
-    print(f"Predicted freshness: {predicted_label}")
-
-    classifier = model.named_steps["classifier"]
-    if hasattr(classifier, "predict_proba"):
-        probabilities = model.predict_proba(feature_row)[0]
+    print(f"Predicted freshness: {result.predicted_freshness}")
+    if result.class_probabilities:
         print("Class probabilities:")
-        for label, probability in zip(label_encoder.classes_, probabilities):
+        for label, probability in result.class_probabilities.items():
             print(f"  {label}: {probability:.4f}")
 
 

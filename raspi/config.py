@@ -30,10 +30,11 @@ TRAINING_METADATA_PATH = MODEL_DIR / "training_metadata.json"
 # Deployment model mode:
 # - "sensor_only" uses MQ ratio summaries + meat type
 # - "image_only" uses image features + meat type
-# - "hybrid" uses image features + MQ ratio summaries + meat type
-# Default to image_only for the current deadline-safe demo because live sensor
-# alignment is still being validated against the training distribution.
-MODEL_MODE = "image_only"
+# - "hybrid" fuses image-only model scores with sensor nearest-class scores
+MODEL_MODE = "hybrid"
+
+HYBRID_IMAGE_WEIGHT = 0.65
+HYBRID_SENSOR_WEIGHT = 0.35
 
 ADS_I2C_ADDRESS = 0x48
 ADS_GAIN = 1

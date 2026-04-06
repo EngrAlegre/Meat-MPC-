@@ -73,6 +73,7 @@ class HybridFreshnessGUI:
         self.system_state = tk.StringVar(value="Initializing")
         self.message_text = tk.StringVar(value="Starting FreshTo...")
         self.warmup_text = tk.StringVar(value="Warm-up status unavailable")
+        self.model_mode_text = tk.StringVar(value=f"Mode: {getattr(config, 'MODEL_MODE', 'hybrid')}")
         self.prediction_text = tk.StringVar(value="--")
         self.confidence_text = tk.StringVar(value="Confidence: --")
         self.confidence_note_text = tk.StringVar(value="No prediction yet.")
@@ -293,9 +294,17 @@ class HybridFreshnessGUI:
             text="Use the physical Chicken, Pork, or Beef button to start a scan automatically.",
             style="Body.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(4, 12))
+        tk.Label(
+            panel,
+            textvariable=self.model_mode_text,
+            bg=self.PANEL,
+            fg=self.INFO,
+            anchor="w",
+            font=("Segoe UI", 10, "bold"),
+        ).grid(row=2, column=0, sticky="w", pady=(0, 12))
 
         selector_frame = tk.Frame(panel, bg=self.PANEL)
-        selector_frame.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        selector_frame.grid(row=3, column=0, sticky="ew", pady=(0, 12))
         ttk.Label(selector_frame, text="Meat Type (physical button only)", style="Body.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         meat_button_row = tk.Frame(selector_frame, bg=self.PANEL)
@@ -322,7 +331,7 @@ class HybridFreshnessGUI:
         self._refresh_meat_buttons()
 
         prediction_panel = tk.Frame(panel, bg=self.CARD, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
-        prediction_panel.grid(row=3, column=0, sticky="ew")
+        prediction_panel.grid(row=4, column=0, sticky="ew")
         tk.Label(prediction_panel, text="Predicted Freshness", bg=self.CARD, fg=self.MUTED, font=("Segoe UI", 11)).pack(anchor="center")
         tk.Label(prediction_panel, textvariable=self.prediction_text, bg=self.CARD, fg=self.TEXT, font=("Segoe UI", 30, "bold")).pack(anchor="center", pady=(8, 4))
         tk.Label(prediction_panel, textvariable=self.confidence_text, bg=self.CARD, fg=self.SUCCESS, font=("Segoe UI", 12, "bold")).pack(anchor="center")
@@ -337,7 +346,7 @@ class HybridFreshnessGUI:
         ).pack(anchor="center", pady=(8, 0))
 
         scores_panel = tk.Frame(panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
-        scores_panel.grid(row=4, column=0, sticky="ew", pady=(12, 12))
+        scores_panel.grid(row=5, column=0, sticky="ew", pady=(12, 12))
         ttk.Label(scores_panel, text="Class Scores", style="PanelTitle.TLabel").pack(anchor="w")
         self.class_scores_label = tk.Label(
             scores_panel,
@@ -500,6 +509,7 @@ class HybridFreshnessGUI:
     def _get_predictor(self) -> HybridFreshnessPredictor:
         if self.predictor is None:
             self.predictor = HybridFreshnessPredictor()
+            self.model_mode_text.set(f"Mode: {self.predictor.mode}")
         return self.predictor
 
     def _update_warmup_state(self) -> None:
@@ -702,17 +712,18 @@ class HybridFreshnessGUI:
                 )
                 image_path = self._get_camera_service().capture_image()
 
+            predictor = self._get_predictor()
+            prediction_mode = getattr(predictor, "mode", getattr(config, "MODEL_MODE", "hybrid"))
             self.worker_queue.put(
-                    lambda: (
-                        self._update_sensor_display(sensor_snapshot),
-                        self._update_environment_display(environment_snapshot),
-                        self._update_image_preview(image_path),
-                        self._set_state("Predicting", self.INFO, "#17364d"),
-                        self._set_message("Running hybrid freshness prediction...", self.INFO),
-                    )
+                lambda: (
+                    self._update_sensor_display(sensor_snapshot),
+                    self._update_environment_display(environment_snapshot),
+                    self._update_image_preview(image_path),
+                    self._set_state("Predicting", self.INFO, "#17364d"),
+                    self._set_message(f"Running {prediction_mode} freshness prediction...", self.INFO),
+                )
             )
 
-            predictor = self._get_predictor()
             sensor_input = {
                 "nh3_ratio": sensor_snapshot["model_sensor_values"]["nh3_ratio"],
                 "nh3_ratio_raw": sensor_snapshot["model_sensor_values"].get("nh3_ratio_raw"),
