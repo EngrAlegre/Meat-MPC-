@@ -8,6 +8,7 @@ PROGRAM_DIR = BASE_DIR.parent
 HYBRID_ML_DIR = PROGRAM_DIR / "hybrid_ml"
 MODEL_DIR = PROGRAM_DIR / "model"
 MODAL_RUNS_DIR = MODEL_DIR / "modal_runs"
+MEAT_CLASSIFIER_DIR = MODEL_DIR / "meat_classifier"
 
 CAPTURE_DIR = BASE_DIR / "captures"
 LOG_DIR = BASE_DIR / "logs"
@@ -26,6 +27,16 @@ MODEL_PATH = MODEL_DIR / "hybrid_freshness_model.joblib"
 LABEL_ENCODER_PATH = MODEL_DIR / "freshness_label_encoder.joblib"
 PREPROCESSOR_PATH = MODEL_DIR / "hybrid_preprocessor.joblib"
 TRAINING_METADATA_PATH = MODEL_DIR / "training_metadata.json"
+MEAT_CLASSIFIER_MODEL_PATH = MEAT_CLASSIFIER_DIR / "meat_classifier.keras"
+MEAT_CLASSIFIER_CLASS_NAMES_PATH = MEAT_CLASSIFIER_DIR / "class_names.json"
+MEAT_CLASSIFIER_METADATA_PATH = MEAT_CLASSIFIER_DIR / "metadata.json"
+MEAT_CLASSIFIER_NOT_MEAT_LABEL = "not_meat"
+MEAT_CLASSIFIER_VALID_LABELS = ("chicken", "pork", "beef")
+MEAT_CLASSIFIER_TO_HYBRID_MEAT_TYPE = {
+    "chicken": "Chicken",
+    "pork": "Pork",
+    "beef": "Beef",
+}
 
 # Deployment model mode:
 # - "sensor_only" uses MQ ratio summaries + meat type
@@ -105,6 +116,14 @@ RUNTIME_RATIO_SCALE = {
 # to Spoiled. VOC is not used for this rule.
 SPOILED_OVERRIDE_ENABLED = True
 SPOILED_OVERRIDE_RATIO_THRESHOLD = 0.30
+
+# Product rule for borderline cases: if the final fused confidence is too low,
+# return Neutral instead of allowing a weak Fresh/Spoiled decision.
+LOW_CONFIDENCE_NEUTRAL_OVERRIDE_ENABLED = True
+LOW_CONFIDENCE_NEUTRAL_THRESHOLD = 0.45
+
+SPOILED_OVERRIDE_ENABLED = True
+SPOILED_OVERRIDE_RATIO_THRESHOLD = 0.25
 
 
 def ensure_runtime_dirs() -> None:

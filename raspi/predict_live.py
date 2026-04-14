@@ -271,6 +271,31 @@ class HybridFreshnessPredictor:
         )
         return overridden, override_note
 
+    def _apply_low_confidence_neutral_override(
+        self,
+        *,
+        class_probabilities: dict[str, float],
+        confidence_note: str,
+    ) -> tuple[dict[str, float], str]:
+        if not getattr(config, "LOW_CONFIDENCE_NEUTRAL_OVERRIDE_ENABLED", False):
+            return class_probabilities, confidence_note
+        if not class_probabilities:
+            return class_probabilities, confidence_note
+
+        top_label = max(class_probabilities, key=class_probabilities.get)
+        top_score = float(class_probabilities[top_label])
+        threshold = float(getattr(config, "LOW_CONFIDENCE_NEUTRAL_THRESHOLD", 0.45))
+        if top_score >= threshold:
+            return class_probabilities, confidence_note
+
+        overridden = {label: 0.0 for label in self.target_classes}
+        overridden["Neutral"] = 1.0
+        override_note = (
+            f"Low-confidence neutral override applied because top score {top_score:.4f} "
+            f"was below {threshold:.2f}. Original top class was {top_label}."
+        )
+        return overridden, override_note
+
     def predict(self, image_path: str | Path, meat_type: str, sensor_values: dict[str, Any]) -> LivePredictionResult:
         normalized_sensor_values = self._normalize_sensor_values(sensor_values)
         image_probabilities: dict[str, float] | None = None
@@ -286,6 +311,10 @@ class HybridFreshnessPredictor:
         class_probabilities, confidence_note = self._apply_spoiled_override(
             class_probabilities=class_probabilities,
             normalized_sensor_values=normalized_sensor_values,
+            confidence_note=confidence_note,
+        )
+        class_probabilities, confidence_note = self._apply_low_confidence_neutral_override(
+            class_probabilities=class_probabilities,
             confidence_note=confidence_note,
         )
         predicted_label = max(class_probabilities, key=class_probabilities.get)

@@ -3,6 +3,7 @@ numpy>=1.26
 opencv-python>=4.9
 pandas>=2.2
 scikit-learn>=1.5
+tensorflow>=2.16
 adafruit-blinka>=8.0
 adafruit-circuitpython-ads1x15>=2.4
 adafruit-circuitpython-dht>=4.0

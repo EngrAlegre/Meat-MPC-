@@ -1,0 +1,10 @@
+              precision    recall  f1-score   support
+
+    not_meat     0.9859    1.0000    0.9929        70
+     chicken     0.9908    1.0000    0.9954       432
+        pork     0.9976    0.9952    0.9964       415
+        beef     1.0000    0.9895    0.9947       381
+
+    accuracy                         0.9954      1298
+   macro avg     0.9936    0.9962    0.9949      1298
+weighted avg     0.9954    0.9954    0.9954      1298

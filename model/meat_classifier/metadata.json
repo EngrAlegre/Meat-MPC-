@@ -1,0 +1,40 @@
+{
+  "model_name": "MobileNetV2",
+  "class_names": [
+    "not_meat",
+    "chicken",
+    "pork",
+    "beef"
+  ],
+  "input_size": [
+    224,
+    224
+  ],
+  "validation_split": 0.2,
+  "batch_size": 16,
+  "freeze_base_epochs": 8,
+  "fine_tune_epochs": 6,
+  "fine_tune_layers": 40,
+  "seed": 42,
+  "dataset_dir": "C:\\Users\\isaac\\Downloads\\chickenprok\\Raspi_5_program\\Dataset\\Image",
+  "dataset_layout": "auto-detected",
+  "label_counts": {
+    "not_meat": 349,
+    "chicken": 2160,
+    "pork": 2073,
+    "beef": 1905
+  },
+  "source_folders": [
+    "beef_fresh",
+    "beef_neutral",
+    "beef_spoiled",
+    "chicken_fresh",
+    "chicken_neutral",
+    "chicken_spoiled",
+    "not_meat",
+    "pork_fresh",
+    "pork_neutral",
+    "pork_spoiled"
+  ],
+  "validation_accuracy": 0.9953775038520801
+}

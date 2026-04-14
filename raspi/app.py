@@ -15,6 +15,7 @@ from PIL import Image, ImageOps, ImageTk
 from button_input import ButtonInputError, MeatButtonController
 import config
 from camera_capture import CameraCaptureError, CameraCaptureService
+from meat_classifier import MeatClassificationResult, MeatClassifierLoadError, MeatClassifierService
 from predict_live import HybridFreshnessPredictor, PredictionLoadError
 from sensor_reader import MQSensorReader, SensorInitializationError, SensorReadError
 
@@ -67,13 +68,16 @@ class HybridFreshnessGUI:
         self.sensor_reader: MQSensorReader | None = None
         self.camera_service: CameraCaptureService | None = None
         self.predictor: HybridFreshnessPredictor | None = None
+        self.meat_classifier: MeatClassifierService | None = None
         self.button_controller: MeatButtonController | None = None
 
-        self.meat_type = tk.StringVar(value="Chicken")
         self.system_state = tk.StringVar(value="Initializing")
         self.message_text = tk.StringVar(value="Starting FreshTo...")
         self.warmup_text = tk.StringVar(value="Warm-up status unavailable")
-        self.model_mode_text = tk.StringVar(value=f"Mode: {getattr(config, 'MODEL_MODE', 'hybrid')}")
+        self.model_mode_text = tk.StringVar(value=f"Freshness mode: {getattr(config, 'MODEL_MODE', 'hybrid')}")
+        self.detected_meat_text = tk.StringVar(value="--")
+        self.detected_meat_confidence_text = tk.StringVar(value="Confidence: --")
+        self.detected_meat_note_text = tk.StringVar(value="No meat detection yet.")
         self.prediction_text = tk.StringVar(value="--")
         self.confidence_text = tk.StringVar(value="Confidence: --")
         self.confidence_note_text = tk.StringVar(value="No prediction yet.")
@@ -95,6 +99,7 @@ class HybridFreshnessGUI:
         self.last_sensor_snapshot: dict[str, Any] | None = None
         self.latest_image_path: Path | None = None
         self.latest_prediction: dict[str, Any] | None = None
+        self.latest_meat_detection: MeatClassificationResult | None = None
         self.sensor_ready = False
         self.last_photo_image = None
         self.environment_refresh_in_progress = False
@@ -291,7 +296,7 @@ class HybridFreshnessGUI:
         ttk.Label(panel, text="Prediction Result", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(
             panel,
-            text="Use the physical Chicken, Pork, or Beef button to start a scan automatically.",
+            text="Any physical hardware button starts a scan. Meat type is now detected automatically from the camera image.",
             style="Body.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(4, 12))
         tk.Label(
@@ -303,35 +308,42 @@ class HybridFreshnessGUI:
             font=("Segoe UI", 10, "bold"),
         ).grid(row=2, column=0, sticky="w", pady=(0, 12))
 
-        selector_frame = tk.Frame(panel, bg=self.PANEL)
-        selector_frame.grid(row=3, column=0, sticky="ew", pady=(0, 12))
-        ttk.Label(selector_frame, text="Meat Type (physical button only)", style="Body.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        trigger_frame = tk.Frame(panel, bg=self.PANEL)
+        trigger_frame.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+        ttk.Label(trigger_frame, text="Physical Scan Triggers", style="Body.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
 
-        meat_button_row = tk.Frame(selector_frame, bg=self.PANEL)
-        meat_button_row.grid(row=1, column=0, sticky="ew")
-        self.meat_buttons: dict[str, tk.Button] = {}
-        for idx, meat_type in enumerate(config.MEAT_TYPES):
-            button = tk.Button(
-                meat_button_row,
-                text=meat_type,
-                state="disabled",
-                disabledforeground=self.TEXT,
+        trigger_row = tk.Frame(trigger_frame, bg=self.PANEL)
+        trigger_row.grid(row=1, column=0, sticky="ew")
+        for idx, label in enumerate(config.MEAT_TYPES):
+            badge = tk.Label(
+                trigger_row,
+                text=f"{label} Button",
                 bg="#183850",
                 fg=self.TEXT,
-                bd=0,
                 padx=14,
                 pady=12,
                 font=("Segoe UI", 12, "bold"),
-                relief="flat",
-                takefocus=0,
             )
-            button.grid(row=0, column=idx, padx=(0 if idx == 0 else 8, 0), sticky="ew")
-            meat_button_row.columnconfigure(idx, weight=1)
-            self.meat_buttons[meat_type] = button
-        self._refresh_meat_buttons()
+            badge.grid(row=0, column=idx, padx=(0 if idx == 0 else 8, 0), sticky="ew")
+            trigger_row.columnconfigure(idx, weight=1)
+
+        detection_panel = tk.Frame(panel, bg=self.CARD, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
+        detection_panel.grid(row=4, column=0, sticky="ew")
+        tk.Label(detection_panel, text="Detected Meat Type", bg=self.CARD, fg=self.MUTED, font=("Segoe UI", 11)).pack(anchor="center")
+        tk.Label(detection_panel, textvariable=self.detected_meat_text, bg=self.CARD, fg=self.TEXT, font=("Segoe UI", 26, "bold")).pack(anchor="center", pady=(8, 4))
+        tk.Label(detection_panel, textvariable=self.detected_meat_confidence_text, bg=self.CARD, fg=self.INFO, font=("Segoe UI", 12, "bold")).pack(anchor="center")
+        tk.Label(
+            detection_panel,
+            textvariable=self.detected_meat_note_text,
+            bg=self.CARD,
+            fg=self.MUTED,
+            wraplength=320,
+            justify="center",
+            font=("Segoe UI", 10),
+        ).pack(anchor="center", pady=(8, 0))
 
         prediction_panel = tk.Frame(panel, bg=self.CARD, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
-        prediction_panel.grid(row=4, column=0, sticky="ew")
+        prediction_panel.grid(row=5, column=0, sticky="ew", pady=(12, 0))
         tk.Label(prediction_panel, text="Predicted Freshness", bg=self.CARD, fg=self.MUTED, font=("Segoe UI", 11)).pack(anchor="center")
         tk.Label(prediction_panel, textvariable=self.prediction_text, bg=self.CARD, fg=self.TEXT, font=("Segoe UI", 30, "bold")).pack(anchor="center", pady=(8, 4))
         tk.Label(prediction_panel, textvariable=self.confidence_text, bg=self.CARD, fg=self.SUCCESS, font=("Segoe UI", 12, "bold")).pack(anchor="center")
@@ -346,7 +358,7 @@ class HybridFreshnessGUI:
         ).pack(anchor="center", pady=(8, 0))
 
         scores_panel = tk.Frame(panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
-        scores_panel.grid(row=5, column=0, sticky="ew", pady=(12, 12))
+        scores_panel.grid(row=6, column=0, sticky="ew", pady=(12, 12))
         ttk.Label(scores_panel, text="Class Scores", style="PanelTitle.TLabel").pack(anchor="w")
         self.class_scores_label = tk.Label(
             scores_panel,
@@ -360,7 +372,7 @@ class HybridFreshnessGUI:
         self.class_scores_label.pack(fill="x", pady=(8, 0))
 
         message_panel = tk.Frame(panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
-        message_panel.grid(row=5, column=0, sticky="ew", pady=(0, 12))
+        message_panel.grid(row=7, column=0, sticky="ew", pady=(0, 12))
         self.message_label = tk.Label(
             message_panel,
             textvariable=self.message_text,
@@ -386,7 +398,7 @@ class HybridFreshnessGUI:
             pady=12,
             font=("Segoe UI", 12, "bold"),
         )
-        exit_button.grid(row=6, column=0, sticky="ew")
+        exit_button.grid(row=8, column=0, sticky="ew")
 
     def _build_log_panel(self, parent: tk.Widget) -> None:
         panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
@@ -464,32 +476,23 @@ class HybridFreshnessGUI:
     def _handle_error(self, task_name: str, exc: Exception) -> None:
         self.scan_in_progress = False
         if task_name.lower() == "start scan":
+            self._clear_meat_detection_display("The latest scan failed before meat detection could complete.")
             self._clear_prediction_display("The latest scan failed. Please try again.")
         self._set_state("Error", self.DANGER, "#4a1f28")
         self._set_message(f"{task_name} failed: {exc}", self.DANGER)
 
-    def _refresh_meat_buttons(self) -> None:
-        current = self.meat_type.get()
-        for meat_type, button in self.meat_buttons.items():
-            selected = meat_type == current
-            button.configure(bg=self.BUTTON if selected else "#183850", disabledforeground=self.TEXT)
-
-    def _set_meat_type(self, meat_type: str) -> None:
-        self.meat_type.set(meat_type)
-        self._refresh_meat_buttons()
-        self._set_message(f"Selected meat type: {meat_type}", self.INFO)
-
-    def _set_meat_type_from_button(self, meat_type: str) -> None:
-        self.meat_type.set(meat_type)
-        self._refresh_meat_buttons()
-        self._set_state("Meat Selected", self.INFO, "#17364d")
-        self._set_message(f"Physical button selected meat type: {meat_type}. Starting scan...", self.SUCCESS)
-        self.start_scan()
+    def _handle_scan_button_press(self, button_label: str) -> None:
+        self._set_state("Scan Requested", self.INFO, "#17364d")
+        self._set_message(
+            f"Physical button pressed ({button_label}). Starting automatic meat detection scan...",
+            self.SUCCESS,
+        )
+        self.start_scan(trigger_source=button_label)
 
     def _setup_hardware_buttons(self) -> None:
         try:
             self.button_controller = MeatButtonController(
-                lambda meat_type: self.worker_queue.put(lambda: self._set_meat_type_from_button(meat_type))
+                lambda button_label: self.worker_queue.put(lambda: self._handle_scan_button_press(button_label))
             )
         except ButtonInputError as exc:
             self._append_log(str(exc))
@@ -506,10 +509,15 @@ class HybridFreshnessGUI:
             self.camera_service = CameraCaptureService()
         return self.camera_service
 
+    def _get_meat_classifier(self) -> MeatClassifierService:
+        if self.meat_classifier is None:
+            self.meat_classifier = MeatClassifierService()
+        return self.meat_classifier
+
     def _get_predictor(self) -> HybridFreshnessPredictor:
         if self.predictor is None:
             self.predictor = HybridFreshnessPredictor()
-            self.model_mode_text.set(f"Mode: {self.predictor.mode}")
+            self.model_mode_text.set(f"Freshness mode: {self.predictor.mode}")
         return self.predictor
 
     def _update_warmup_state(self) -> None:
@@ -673,6 +681,23 @@ class HybridFreshnessGUI:
             text = "No class score breakdown available."
         self.class_scores_label.configure(text=text)
 
+    def _update_meat_detection_display(self, result: MeatClassificationResult) -> None:
+        self.latest_meat_detection = result
+        if result.predicted_class == config.MEAT_CLASSIFIER_NOT_MEAT_LABEL:
+            self.detected_meat_text.set("No valid meat")
+            self.detected_meat_note_text.set("Freshness prediction was skipped because the image was classified as not_meat.")
+        else:
+            detected_name = result.hybrid_meat_type or result.predicted_class.replace("_", " ").title()
+            self.detected_meat_text.set(detected_name)
+            self.detected_meat_note_text.set("Detected from the new Option B image classifier before running freshness prediction.")
+        self.detected_meat_confidence_text.set(f"Confidence: {result.confidence:.4f}")
+
+    def _clear_meat_detection_display(self, note: str = "Waiting for a new scan.") -> None:
+        self.latest_meat_detection = None
+        self.detected_meat_text.set("--")
+        self.detected_meat_confidence_text.set("Confidence: --")
+        self.detected_meat_note_text.set(note)
+
     def _clear_prediction_display(self, note: str = "Scanning in progress.") -> None:
         self.latest_prediction = None
         self.prediction_text.set("--")
@@ -680,14 +705,45 @@ class HybridFreshnessGUI:
         self.confidence_note_text.set(note)
         self.class_scores_label.configure(text="Waiting for a new prediction...")
 
-    def start_scan(self) -> None:
+    def start_scan(self, trigger_source: str | None = None) -> None:
         if self.scan_in_progress:
             self._set_message("A scan is already running. Please wait.", self.WARNING)
             return
         self.scan_in_progress = True
+        self._clear_meat_detection_display("Running meat detection from the latest captured image.")
         self._clear_prediction_display("Scanning in progress.")
 
         def work():
+            with self.camera_lock:
+                self.worker_queue.put(
+                    lambda: (
+                        self._set_state("Capturing Image", self.INFO, "#17364d"),
+                        self._set_message("Capturing image for automatic meat detection...", self.INFO),
+                    )
+                )
+                image_path = self._get_camera_service().capture_image()
+
+            meat_classifier = self._get_meat_classifier()
+            self.worker_queue.put(
+                lambda: (
+                    self._update_image_preview(image_path),
+                    self._set_state("Detecting Meat", self.INFO, "#17364d"),
+                    self._set_message("Running meat classifier on the captured image...", self.INFO),
+                )
+            )
+            meat_detection = meat_classifier.classify(image_path)
+
+            if not meat_detection.is_valid_meat:
+                return {
+                    "image_path": image_path,
+                    "meat_detection": meat_detection,
+                    "prediction": None,
+                    "sensor_snapshot": None,
+                    "environment_snapshot": None,
+                    "skipped_reason": "No valid meat detected",
+                    "trigger_source": trigger_source,
+                }
+
             with self.sensor_lock:
                 reader = self._get_sensor_reader()
                 if not reader.is_warmed_up():
@@ -697,20 +753,14 @@ class HybridFreshnessGUI:
                 self.worker_queue.put(
                     lambda: (
                         self._set_state("Collecting Scan Data", self.INFO, "#17364d"),
-                        self._set_message("Collecting sensor window for scan...", self.INFO),
+                        self._set_message(
+                            f"Detected {meat_detection.hybrid_meat_type}. Collecting MQ sensor window for freshness scan...",
+                            self.INFO,
+                        ),
                     )
                 )
                 sensor_snapshot = reader.stabilize(read_count=config.SCAN_SUMMARY_READS)
                 environment_snapshot = reader.read_environment()
-
-            with self.camera_lock:
-                self.worker_queue.put(
-                    lambda: (
-                        self._set_state("Capturing Image", self.INFO, "#17364d"),
-                        self._set_message("Capturing image for scan...", self.INFO),
-                    )
-                )
-                image_path = self._get_camera_service().capture_image()
 
             predictor = self._get_predictor()
             prediction_mode = getattr(predictor, "mode", getattr(config, "MODEL_MODE", "hybrid"))
@@ -719,8 +769,12 @@ class HybridFreshnessGUI:
                     self._update_sensor_display(sensor_snapshot),
                     self._update_environment_display(environment_snapshot),
                     self._update_image_preview(image_path),
+                    self._update_meat_detection_display(meat_detection),
                     self._set_state("Predicting", self.INFO, "#17364d"),
-                    self._set_message(f"Running {prediction_mode} freshness prediction...", self.INFO),
+                    self._set_message(
+                        f"Detected {meat_detection.hybrid_meat_type}. Running {prediction_mode} freshness prediction...",
+                        self.INFO,
+                    ),
                 )
             )
 
@@ -742,12 +796,13 @@ class HybridFreshnessGUI:
             sensor_input.update(ratio_summary_features)
             result = predictor.predict(
                 image_path=image_path,
-                meat_type=self.meat_type.get(),
+                meat_type=meat_detection.hybrid_meat_type or "Chicken",
                 sensor_values=sensor_input,
             )
             predictor.append_prediction_log(result)
 
             return {
+                "meat_detection": meat_detection,
                 "sensor_snapshot": sensor_snapshot,
                 "environment_snapshot": environment_snapshot,
                 "image_path": image_path,
@@ -762,13 +817,25 @@ class HybridFreshnessGUI:
         def on_success(result: dict[str, Any]) -> None:
             self.scan_in_progress = False
             self.sensor_ready = True
+            self._update_image_preview(result["image_path"])
+            self._update_meat_detection_display(result["meat_detection"])
+
+            if result["prediction"] is None:
+                self._clear_prediction_display("No valid meat detected. Freshness model was not executed.")
+                self._set_state("No Valid Meat", self.WARNING, "#4d3b1d")
+                self._set_message(
+                    "Scan stopped because the captured image was classified as not_meat. No valid meat detected.",
+                    self.WARNING,
+                )
+                return
+
             self._update_sensor_display(result["sensor_snapshot"])
             self._update_environment_display(result["environment_snapshot"])
-            self._update_image_preview(result["image_path"])
             self._update_prediction_display(result["prediction"])
+            detected_name = result["meat_detection"].hybrid_meat_type or result["meat_detection"].predicted_class
             self._set_state("Scan Complete", self.SUCCESS, "#184236")
             self._set_message(
-                f"Scan complete. {self.meat_type.get()} is predicted as {result['prediction']['predicted_freshness']}.",
+                f"Scan complete. Detected {detected_name} and predicted {result['prediction']['predicted_freshness']}.",
                 self.SUCCESS,
             )
 
