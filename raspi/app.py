@@ -581,6 +581,7 @@ class HybridFreshnessGUI:
                 on_scroll_down=lambda: self.worker_queue.put(lambda: self._scroll_content(1)),
                 on_capture_empty_reference=lambda: self.worker_queue.put(self.capture_empty_reference),
             )
+            self._append_log(f"Physical button controller ready: {self.button_controller.status_summary()}")
         except ButtonInputError as exc:
             self._append_log(str(exc))
         except Exception as exc:
