@@ -145,7 +145,6 @@ class HybridFreshnessGUI:
         self._configure_styles()
         self._build_layout()
         self._setup_hardware_buttons()
-        self._schedule_button_poll()
         self._schedule_worker_poll()
         self._schedule_status_refresh()
         self._preload_models_async()
@@ -466,14 +465,6 @@ class HybridFreshnessGUI:
         except queue.Empty:
             pass
         self.root.after(120, self._schedule_worker_poll)
-
-    def _schedule_button_poll(self) -> None:
-        if self.button_controller is not None:
-            try:
-                self.button_controller.poll_events()
-            except Exception as exc:
-                self._append_log(f"Physical button poll error: {exc}")
-        self.root.after(80, self._schedule_button_poll)
 
     def _on_canvas_configure(self, event: tk.Event) -> None:
         self.content_canvas.itemconfigure(self.content_window, width=event.width)

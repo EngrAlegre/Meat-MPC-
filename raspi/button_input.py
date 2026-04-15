@@ -32,8 +32,6 @@ class ScrollButtonController:
             )
 
         self._buttons: dict[str, Button] = {}
-        self._callbacks: dict[str, Callable[[], None]] = {}
-        self._last_pressed_state: dict[str, bool] = {}
         self._on_scroll_up = on_scroll_up
         self._on_scroll_down = on_scroll_down
         self._on_capture_empty_reference = on_capture_empty_reference
@@ -58,8 +56,6 @@ class ScrollButtonController:
             )
             button.when_pressed = callback
             self._buttons[name] = button
-            self._callbacks[name] = callback
-            self._last_pressed_state[name] = bool(button.is_pressed)
         except Exception as exc:  # pragma: no cover - hardware specific
             message = f"{name} on GPIO{pin} failed: {exc}"
             self._errors.append(message)
@@ -83,22 +79,6 @@ class ScrollButtonController:
         if not self._errors:
             return f"available={available} | mode={mode}"
         return f"available={available} | mode={mode} | errors={' ; '.join(self._errors)}"
-
-    def poll_events(self) -> None:
-        for name, button in self._buttons.items():
-            try:
-                is_pressed = bool(button.is_pressed)
-            except Exception as exc:  # pragma: no cover - hardware specific
-                LOGGER.warning("Failed to read button state for %s: %s", name, exc)
-                continue
-
-            previous_state = self._last_pressed_state.get(name, False)
-            if is_pressed and not previous_state:
-                callback = self._callbacks.get(name)
-                if callback is not None:
-                    LOGGER.info("Physical %s button detected by poll loop.", name)
-                    callback()
-            self._last_pressed_state[name] = is_pressed
 
     def close(self) -> None:
         for button in self._buttons.values():

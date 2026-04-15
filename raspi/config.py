@@ -44,7 +44,7 @@ SCROLL_UP_GPIO_PIN = 17
 SCROLL_DOWN_GPIO_PIN = 27
 RESERVED_BUTTON_GPIO_PIN = 22
 SCROLL_BUTTON_STEP_UNITS = 3
-BUTTON_PULL_UP = False
+BUTTON_PULL_UP = True
 
 MODEL_PATH = MODEL_DIR / "hybrid_freshness_model.joblib"
 LABEL_ENCODER_PATH = MODEL_DIR / "freshness_label_encoder.joblib"
@@ -110,11 +110,6 @@ ALLOW_OPENCV_CAMERA_FALLBACK = True
 
 MEAT_TYPES = ("Chicken", "Beef", "Pork")
 FRESHNESS_CLASSES = ("Fresh", "Neutral", "Spoiled")
-MEAT_BUTTON_GPIO_MAP = {
-    "Chicken": 17,
-    "Pork": 27,
-    "Beef": 22,
-}
 BUTTON_BOUNCE_SECONDS = 0.15
 
 DHT22_ENABLED = True
@@ -138,15 +133,12 @@ RUNTIME_RATIO_SCALE = {
 # if either NH3 or H2S ratio falls below the threshold, force the final result
 # to Spoiled. VOC is not used for this rule.
 SPOILED_OVERRIDE_ENABLED = True
-SPOILED_OVERRIDE_RATIO_THRESHOLD = 0.30
+SPOILED_OVERRIDE_RATIO_THRESHOLD = 0.25
 
 # Product rule for borderline cases: if the final fused confidence is too low,
 # return Neutral instead of allowing a weak Fresh/Spoiled decision.
 LOW_CONFIDENCE_NEUTRAL_OVERRIDE_ENABLED = True
 LOW_CONFIDENCE_NEUTRAL_THRESHOLD = 0.45
-
-SPOILED_OVERRIDE_ENABLED = True
-SPOILED_OVERRIDE_RATIO_THRESHOLD = 0.25
 
 
 def ensure_runtime_dirs() -> None:
