@@ -565,6 +565,31 @@ class HybridFreshnessGUI:
             self.model_mode_text.set(f"Freshness mode: {self.predictor.mode}")
         return self.predictor
 
+    def _capture_empty_reference_from_live_preview(self, preview_image: Image.Image) -> bool:
+        frames: list[np.ndarray] = []
+        last_preview_image = preview_image
+        try:
+            frames.append(prepare_detection_frame(preview_image))
+            for _ in range(max(config.EMPTY_REFERENCE_CAPTURE_FRAME_COUNT - 1, 0)):
+                time.sleep(config.EMPTY_REFERENCE_CAPTURE_INTERVAL_SECONDS)
+                latest_preview = self._get_camera_service().get_preview_image()
+                last_preview_image = latest_preview
+                frames.append(prepare_detection_frame(latest_preview))
+        except Exception as exc:
+            self._append_log(f"Failed while capturing empty chamber reference: {exc}")
+            return False
+
+        if not frames:
+            return False
+
+        self.empty_reference_frame = np.mean(np.stack(frames, axis=0), axis=0)
+        save_reference_image(last_preview_image, config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH)
+        self.last_detection_frame = self.empty_reference_frame.copy()
+        self._append_log(
+            f"Empty chamber reference captured from {len(frames)} preview frame(s): {config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH}"
+        )
+        return True
+
     def _ensure_empty_reference(self, preview_image: Image.Image | None = None) -> bool:
         if self.empty_reference_frame is not None:
             return True
@@ -572,12 +597,7 @@ class HybridFreshnessGUI:
             return False
         if preview_image is None:
             return False
-        save_reference_image(preview_image, config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH)
-        self.empty_reference_frame = prepare_detection_frame(preview_image)
-        self._append_log(
-            f"Empty chamber reference captured automatically: {config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH}"
-        )
-        return True
+        return self._capture_empty_reference_from_live_preview(preview_image)
 
     def _reset_automation_tracking(self) -> None:
         self.object_detected_since = None
@@ -607,7 +627,7 @@ class HybridFreshnessGUI:
                     waiting_label = (
                         "Waiting for Object"
                         if self.empty_reference_frame is not None
-                        else "Capturing Reference"
+                        else "Capturing Empty Chamber"
                     )
                     self._transition_state(
                         self.STATE_WAITING_FOR_OBJECT if self.empty_reference_frame is not None else self.STATE_INITIALIZING,
@@ -770,7 +790,7 @@ class HybridFreshnessGUI:
                 return
             if object_present:
                 self.object_detected_since = self.object_detected_since or current_time
-                self.stable_since = current_time if object_stable else None
+                present_duration = current_time - self.object_detected_since
                 self._transition_state(
                     self.STATE_OBJECT_DETECTED,
                     label="Object Detected",
@@ -778,8 +798,21 @@ class HybridFreshnessGUI:
                     bg="#4d3b1d",
                     log_message=f"Object detected in chamber | reference difference={reference_difference:.4f}",
                 )
-                self.message_text.set("Object detected. Confirming stability before analysis.")
+                self.message_text.set(
+                    f"Object detected. Confirming presence ({present_duration:.1f}s / {config.OBJECT_PRESENCE_CONFIRM_SECONDS:.1f}s)."
+                )
                 self.message_label.configure(fg=self.WARNING)
+                if present_duration >= config.OBJECT_PRESENCE_CONFIRM_SECONDS:
+                    self.stable_since = current_time if object_stable else None
+                    self._transition_state(
+                        self.STATE_STABILITY_CHECK,
+                        label="Checking Stability",
+                        fg=self.INFO,
+                        bg="#17364d",
+                        log_message="Object presence confirmed. Starting stability check.",
+                    )
+            else:
+                self.object_detected_since = None
             return
 
         if self.automation_state in {self.STATE_OBJECT_DETECTED, self.STATE_STABILITY_CHECK}:
