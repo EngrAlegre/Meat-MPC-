@@ -137,12 +137,15 @@ class HybridFreshnessGUI:
         self.preview_refresh_in_progress = False
         self.last_preview_poll_monotonic = 0.0
         self.scan_in_progress = False
+        self.model_preload_started = False
+        self.model_preload_complete = False
 
         self._configure_styles()
         self._build_layout()
         self._setup_hardware_buttons()
         self._schedule_worker_poll()
         self._schedule_status_refresh()
+        self._preload_models_async()
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -519,6 +522,27 @@ class HybridFreshnessGUI:
                 self.worker_queue.put(lambda: self._handle_error(task_name, exc))
 
         Thread(target=worker, daemon=True).start()
+
+    def _preload_models_async(self) -> None:
+        if self.model_preload_started:
+            return
+        self.model_preload_started = True
+        self._append_log("Starting background preload for the meat classifier and freshness predictor.")
+
+        def worker() -> None:
+            try:
+                self._get_meat_classifier()
+                self._get_predictor()
+                self.worker_queue.put(self._mark_model_preload_complete)
+            except Exception as exc:
+                LOGGER.exception("Background model preload failed")
+                self.worker_queue.put(lambda: self._append_log(f"Background model preload failed: {exc}"))
+
+        Thread(target=worker, daemon=True).start()
+
+    def _mark_model_preload_complete(self) -> None:
+        self.model_preload_complete = True
+        self._append_log("Background model preload complete.")
 
     def _handle_error(self, task_name: str, exc: Exception) -> None:
         self.scan_in_progress = False
@@ -994,7 +1018,6 @@ class HybridFreshnessGUI:
                 else:
                     image_path = camera_service.capture_image(prefix="auto_scan")
 
-            meat_classifier = self._get_meat_classifier()
             self.worker_queue.put(
                 lambda: (
                     self._update_image_preview(image_path),
@@ -1003,11 +1026,12 @@ class HybridFreshnessGUI:
                         label="Detecting Meat",
                         fg=self.INFO,
                         bg="#17364d",
-                        log_message="Captured analysis image. Running meat classifier.",
+                        log_message="Captured analysis image. Preparing meat classifier.",
                     ),
-                    self._set_message("Running meat classifier on the captured image...", self.INFO),
+                    self._set_message("Loading meat classifier and running detection on the captured image...", self.INFO),
                 )
             )
+            meat_classifier = self._get_meat_classifier()
             meat_detection = meat_classifier.classify(image_path)
 
             if not meat_detection.is_valid_meat:
@@ -1045,6 +1069,12 @@ class HybridFreshnessGUI:
                 sensor_snapshot = reader.stabilize(read_count=config.AUTO_SENSOR_STABILIZATION_READ_COUNT)
                 environment_snapshot = reader.read_environment()
 
+            self.worker_queue.put(
+                lambda: self._set_message(
+                    "Preparing the freshness predictor for the validated meat sample...",
+                    self.INFO,
+                )
+            )
             predictor = self._get_predictor()
             prediction_mode = getattr(predictor, "mode", getattr(config, "MODEL_MODE", "hybrid"))
             self.worker_queue.put(
