@@ -18,28 +18,55 @@ class ButtonInputError(RuntimeError):
     pass
 
 
-class MeatButtonController:
-    def __init__(self, on_meat_selected: Callable[[str], None]) -> None:
+class ScrollButtonController:
+    def __init__(
+        self,
+        *,
+        on_scroll_up: Callable[[], None],
+        on_scroll_down: Callable[[], None],
+    ) -> None:
         if Button is None:
             raise ButtonInputError(
-                "gpiozero is not available. Install gpiozero on the Raspberry Pi to use the physical meat buttons."
+                "gpiozero is not available. Install gpiozero on the Raspberry Pi to use the physical buttons."
             )
 
         self._buttons: dict[str, Button] = {}
-        self._on_meat_selected = on_meat_selected
+        self._on_scroll_up = on_scroll_up
+        self._on_scroll_down = on_scroll_down
 
         try:
-            for meat_type, gpio_pin in config.MEAT_BUTTON_GPIO_MAP.items():
-                button = Button(gpio_pin, pull_up=True, bounce_time=config.BUTTON_BOUNCE_SECONDS)
-                button.when_pressed = lambda label=meat_type: self._handle_press(label)
-                self._buttons[meat_type] = button
-            LOGGER.info("Physical meat buttons initialized on GPIO pins: %s", config.MEAT_BUTTON_GPIO_MAP)
-        except Exception as exc:  # pragma: no cover - hardware specific
-            raise ButtonInputError(f"Failed to initialize physical meat buttons: {exc}") from exc
+            up_button = Button(
+                config.SCROLL_UP_GPIO_PIN,
+                pull_up=True,
+                bounce_time=config.BUTTON_BOUNCE_SECONDS,
+            )
+            up_button.when_pressed = self._handle_scroll_up
+            self._buttons["scroll_up"] = up_button
 
-    def _handle_press(self, meat_type: str) -> None:
-        LOGGER.info("Physical meat button pressed: %s", meat_type)
-        self._on_meat_selected(meat_type)
+            down_button = Button(
+                config.SCROLL_DOWN_GPIO_PIN,
+                pull_up=True,
+                bounce_time=config.BUTTON_BOUNCE_SECONDS,
+            )
+            down_button.when_pressed = self._handle_scroll_down
+            self._buttons["scroll_down"] = down_button
+
+            LOGGER.info(
+                "Scroll buttons initialized | up=GPIO%d | down=GPIO%d | reserved=GPIO%d",
+                config.SCROLL_UP_GPIO_PIN,
+                config.SCROLL_DOWN_GPIO_PIN,
+                config.RESERVED_BUTTON_GPIO_PIN,
+            )
+        except Exception as exc:  # pragma: no cover - hardware specific
+            raise ButtonInputError(f"Failed to initialize scroll buttons: {exc}") from exc
+
+    def _handle_scroll_up(self) -> None:
+        LOGGER.info("Physical scroll-up button pressed.")
+        self._on_scroll_up()
+
+    def _handle_scroll_down(self) -> None:
+        LOGGER.info("Physical scroll-down button pressed.")
+        self._on_scroll_down()
 
     def close(self) -> None:
         for button in self._buttons.values():

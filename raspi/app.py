@@ -10,9 +10,11 @@ import time
 from tkinter import ttk
 from typing import Any, Callable
 
+import numpy as np
 from PIL import Image, ImageOps, ImageTk
 
-from button_input import ButtonInputError, MeatButtonController
+from button_input import ButtonInputError, ScrollButtonController
+from chamber_detector import difference_score, load_reference_frame, prepare_detection_frame, save_reference_image
 import config
 from camera_capture import CameraCaptureError, CameraCaptureService
 from meat_classifier import MeatClassificationResult, MeatClassifierLoadError, MeatClassifierService
@@ -47,6 +49,17 @@ class HybridFreshnessGUI:
     DANGER = "#ff7585"
     BUTTON = "#27c288"
     BUTTON_ALT = "#54a7f5"
+    STATE_INITIALIZING = "INITIALIZING"
+    STATE_WARMING_UP = "WARMING_UP"
+    STATE_WAITING_FOR_OBJECT = "WAITING_FOR_OBJECT"
+    STATE_OBJECT_DETECTED = "OBJECT_DETECTED"
+    STATE_STABILITY_CHECK = "STABILITY_CHECK"
+    STATE_CLASSIFYING_MEAT = "CLASSIFYING_MEAT"
+    STATE_STABILIZING_SENSORS = "STABILIZING_SENSORS"
+    STATE_PREDICTING_FRESHNESS = "PREDICTING_FRESHNESS"
+    STATE_SHOWING_RESULT = "SHOWING_RESULT"
+    STATE_WAITING_FOR_REMOVAL = "WAITING_FOR_REMOVAL"
+    STATE_RESETTING = "RESETTING"
 
     def __init__(self) -> None:
         self.root = tk.Tk()
@@ -69,10 +82,10 @@ class HybridFreshnessGUI:
         self.camera_service: CameraCaptureService | None = None
         self.predictor: HybridFreshnessPredictor | None = None
         self.meat_classifier: MeatClassifierService | None = None
-        self.button_controller: MeatButtonController | None = None
+        self.button_controller: ScrollButtonController | None = None
 
         self.system_state = tk.StringVar(value="Initializing")
-        self.message_text = tk.StringVar(value="Starting FreshTo...")
+        self.message_text = tk.StringVar(value="Starting FreshTo automatic monitoring...")
         self.warmup_text = tk.StringVar(value="Warm-up status unavailable")
         self.model_mode_text = tk.StringVar(value=f"Freshness mode: {getattr(config, 'MODEL_MODE', 'hybrid')}")
         self.detected_meat_text = tk.StringVar(value="--")
@@ -102,6 +115,17 @@ class HybridFreshnessGUI:
         self.latest_meat_detection: MeatClassificationResult | None = None
         self.sensor_ready = False
         self.last_photo_image = None
+        self.current_preview_image: Image.Image | None = None
+        self.empty_reference_frame: np.ndarray | None = load_reference_frame(config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH)
+        self.automation_state = self.STATE_INITIALIZING
+        self.object_detected_since: float | None = None
+        self.stable_since: float | None = None
+        self.removal_since: float | None = None
+        self.last_result_time: float | None = None
+        self.last_reset_time: float = 0.0
+        self.last_detection_frame: np.ndarray | None = None
+        self.last_reference_difference: float = 0.0
+        self.last_frame_difference: float = 0.0
         self.environment_refresh_in_progress = False
         self.last_environment_poll_monotonic = 0.0
         self.sensor_refresh_in_progress = False
@@ -296,7 +320,7 @@ class HybridFreshnessGUI:
         ttk.Label(panel, text="Prediction Result", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(
             panel,
-            text="Any physical hardware button starts a scan. Meat type is now detected automatically from the camera image.",
+            text="The system now watches the chamber automatically. Physical buttons are used only for scrolling the touchscreen view.",
             style="Body.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(4, 12))
         tk.Label(
@@ -310,14 +334,15 @@ class HybridFreshnessGUI:
 
         trigger_frame = tk.Frame(panel, bg=self.PANEL)
         trigger_frame.grid(row=3, column=0, sticky="ew", pady=(0, 12))
-        ttk.Label(trigger_frame, text="Physical Scan Triggers", style="Body.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        ttk.Label(trigger_frame, text="Physical Scroll Buttons", style="Body.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         trigger_row = tk.Frame(trigger_frame, bg=self.PANEL)
         trigger_row.grid(row=1, column=0, sticky="ew")
-        for idx, label in enumerate(config.MEAT_TYPES):
+        trigger_labels = ("Scroll Up", "Scroll Down", "Reserved")
+        for idx, label in enumerate(trigger_labels):
             badge = tk.Label(
                 trigger_row,
-                text=f"{label} Button",
+                text=label,
                 bg="#183850",
                 fg=self.TEXT,
                 padx=14,
@@ -419,7 +444,7 @@ class HybridFreshnessGUI:
             highlightthickness=0,
         )
         self.log_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
-        self._append_log("GUI initialized. Waiting for hardware actions.")
+        self._append_log("GUI initialized. Starting automatic chamber monitoring.")
 
     def _schedule_worker_poll(self) -> None:
         try:
@@ -438,7 +463,7 @@ class HybridFreshnessGUI:
         self._request_live_sensor_refresh()
         self._request_environment_refresh()
         self._request_camera_preview_refresh()
-        self.root.after(1000, self._schedule_status_refresh)
+        self.root.after(400, self._schedule_status_refresh)
 
     def _append_log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -455,10 +480,28 @@ class HybridFreshnessGUI:
         self.system_state.set(label)
         self.state_badge.configure(fg=fg or self.INFO, bg=bg or "#16344c")
 
+    def _transition_state(
+        self,
+        state: str,
+        *,
+        label: str,
+        fg: str | None = None,
+        bg: str | None = None,
+        log_message: str | None = None,
+    ) -> None:
+        if self.automation_state != state:
+            self.automation_state = state
+            self._append_log(log_message or f"State changed to {state}.")
+        self._set_state(label, fg=fg, bg=bg)
+
     def _set_message(self, message: str, color: str | None = None) -> None:
         self.message_text.set(message)
         self.message_label.configure(fg=color or self.MUTED)
         self._append_log(message)
+
+    def _scroll_content(self, direction: int) -> None:
+        self.content_canvas.yview_scroll(direction * config.SCROLL_BUTTON_STEP_UNITS, "units")
+        self._append_log("Scrolled %s via physical button." % ("down" if direction > 0 else "up"))
 
     def _run_async(self, task_name: str, work: Callable[[], Any], on_success: Callable[[Any], None]) -> None:
         self._set_message(f"{task_name}...", self.INFO)
@@ -478,21 +521,23 @@ class HybridFreshnessGUI:
         if task_name.lower() == "start scan":
             self._clear_meat_detection_display("The latest scan failed before meat detection could complete.")
             self._clear_prediction_display("The latest scan failed. Please try again.")
-        self._set_state("Error", self.DANGER, "#4a1f28")
+            self._transition_state(
+                self.STATE_WAITING_FOR_REMOVAL,
+                label="Waiting for Removal",
+                fg=self.DANGER,
+                bg="#4a1f28",
+                log_message="Scan failed. Waiting for the chamber to clear before the next cycle.",
+            )
+            self.last_result_time = time.monotonic()
+        else:
+            self._set_state("Error", self.DANGER, "#4a1f28")
         self._set_message(f"{task_name} failed: {exc}", self.DANGER)
-
-    def _handle_scan_button_press(self, button_label: str) -> None:
-        self._set_state("Scan Requested", self.INFO, "#17364d")
-        self._set_message(
-            f"Physical button pressed ({button_label}). Starting automatic meat detection scan...",
-            self.SUCCESS,
-        )
-        self.start_scan(trigger_source=button_label)
 
     def _setup_hardware_buttons(self) -> None:
         try:
-            self.button_controller = MeatButtonController(
-                lambda button_label: self.worker_queue.put(lambda: self._handle_scan_button_press(button_label))
+            self.button_controller = ScrollButtonController(
+                on_scroll_up=lambda: self.worker_queue.put(lambda: self._scroll_content(-1)),
+                on_scroll_down=lambda: self.worker_queue.put(lambda: self._scroll_content(1)),
             )
         except ButtonInputError as exc:
             self._append_log(str(exc))
@@ -520,18 +565,61 @@ class HybridFreshnessGUI:
             self.model_mode_text.set(f"Freshness mode: {self.predictor.mode}")
         return self.predictor
 
+    def _ensure_empty_reference(self, preview_image: Image.Image | None = None) -> bool:
+        if self.empty_reference_frame is not None:
+            return True
+        if not getattr(config, "AUTO_CAPTURE_EMPTY_REFERENCE_IF_MISSING", True):
+            return False
+        if preview_image is None:
+            return False
+        save_reference_image(preview_image, config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH)
+        self.empty_reference_frame = prepare_detection_frame(preview_image)
+        self._append_log(
+            f"Empty chamber reference captured automatically: {config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH}"
+        )
+        return True
+
+    def _reset_automation_tracking(self) -> None:
+        self.object_detected_since = None
+        self.stable_since = None
+        self.removal_since = None
+        self.last_detection_frame = None
+
     def _update_warmup_state(self) -> None:
         try:
             reader = self._get_sensor_reader()
             remaining = reader.warmup_remaining_seconds()
             if remaining > 0:
                 self.warmup_text.set(f"Warm-up remaining: {remaining:.1f}s")
-                if not self.sensor_ready:
-                    self._set_state("Warming Up", self.WARNING, "#4d3b1d")
+                self._transition_state(
+                    self.STATE_WARMING_UP,
+                    label="Warming Up",
+                    fg=self.WARNING,
+                    bg="#4d3b1d",
+                    log_message="Sensors warming up before automatic monitoring starts.",
+                )
             else:
                 self.warmup_text.set("Warm-up complete")
-                if not self.sensor_ready:
-                    self._set_state("Ready to Scan", self.INFO, "#16344c")
+                if self.automation_state in {
+                    self.STATE_INITIALIZING,
+                    self.STATE_WARMING_UP,
+                }:
+                    waiting_label = (
+                        "Waiting for Object"
+                        if self.empty_reference_frame is not None
+                        else "Capturing Reference"
+                    )
+                    self._transition_state(
+                        self.STATE_WAITING_FOR_OBJECT if self.empty_reference_frame is not None else self.STATE_INITIALIZING,
+                        label=waiting_label,
+                        fg=self.INFO,
+                        bg="#16344c",
+                        log_message=(
+                            "Warm-up complete. Monitoring chamber for new objects."
+                            if self.empty_reference_frame is not None
+                            else "Warm-up complete. Waiting to capture empty chamber reference."
+                        ),
+                    )
         except SensorInitializationError as exc:
             self.warmup_text.set("Sensor init failed")
             self._set_message(str(exc), self.DANGER)
@@ -627,14 +715,149 @@ class HybridFreshnessGUI:
         self.image_label.configure(image=photo, text="")
 
     def _update_preview_from_image(self, image: Image.Image) -> None:
+        self.current_preview_image = image.copy()
         photo = ImageTk.PhotoImage(image)
         self.last_photo_image = photo
         self.image_label.configure(image=photo, text="")
 
+    def _handle_automation_preview(self, preview_image: Image.Image) -> None:
+        if not getattr(config, "AUTOMATION_ENABLED", True):
+            return
+        if self.scan_in_progress:
+            return
+        if self.automation_state == self.STATE_WARMING_UP:
+            return
+
+        if self.empty_reference_frame is None:
+            if self._ensure_empty_reference(preview_image):
+                self._transition_state(
+                    self.STATE_WAITING_FOR_OBJECT,
+                    label="Waiting for Object",
+                    fg=self.INFO,
+                    bg="#16344c",
+                    log_message="Empty chamber reference ready. Automatic monitoring is active.",
+                )
+            return
+
+        current_frame = prepare_detection_frame(preview_image)
+        current_time = time.monotonic()
+        reference_difference = difference_score(current_frame, self.empty_reference_frame)
+        frame_difference = (
+            difference_score(current_frame, self.last_detection_frame)
+            if self.last_detection_frame is not None
+            else 0.0
+        )
+        self.last_reference_difference = reference_difference
+        self.last_frame_difference = frame_difference
+        self.last_detection_frame = current_frame
+
+        object_present = reference_difference >= config.OBJECT_DETECTION_THRESHOLD
+        object_stable = frame_difference <= config.OBJECT_STABLE_FRAME_DIFF_THRESHOLD
+        empty_again = reference_difference <= config.REMOVAL_DETECTION_THRESHOLD
+
+        automation_note = (
+            f"State: {self.automation_state}\n"
+            f"Reference difference: {reference_difference:.4f}\n"
+            f"Frame-to-frame difference: {frame_difference:.4f}\n"
+            f"Object threshold: {config.OBJECT_DETECTION_THRESHOLD:.4f}\n"
+            f"Stable threshold: {config.OBJECT_STABLE_FRAME_DIFF_THRESHOLD:.4f}\n"
+            f"Removal threshold: {config.REMOVAL_DETECTION_THRESHOLD:.4f}"
+        )
+        self._set_text_widget(self.stability_text, automation_note)
+
+        if self.automation_state in {self.STATE_WAITING_FOR_OBJECT, self.STATE_INITIALIZING, self.STATE_RESETTING}:
+            if current_time - self.last_reset_time < config.AUTO_RESET_COOLDOWN_SECONDS:
+                return
+            if object_present:
+                self.object_detected_since = self.object_detected_since or current_time
+                self.stable_since = current_time if object_stable else None
+                self._transition_state(
+                    self.STATE_OBJECT_DETECTED,
+                    label="Object Detected",
+                    fg=self.WARNING,
+                    bg="#4d3b1d",
+                    log_message=f"Object detected in chamber | reference difference={reference_difference:.4f}",
+                )
+                self.message_text.set("Object detected. Confirming stability before analysis.")
+                self.message_label.configure(fg=self.WARNING)
+            return
+
+        if self.automation_state in {self.STATE_OBJECT_DETECTED, self.STATE_STABILITY_CHECK}:
+            if not object_present:
+                self._reset_automation_tracking()
+                self._transition_state(
+                    self.STATE_WAITING_FOR_OBJECT,
+                    label="Waiting for Object",
+                    fg=self.INFO,
+                    bg="#16344c",
+                    log_message="Object moved away before stability was confirmed. Returning to idle monitoring.",
+                )
+                self.message_text.set("Waiting for a stable object in the chamber.")
+                self.message_label.configure(fg=self.MUTED)
+                return
+
+            self._transition_state(
+                self.STATE_STABILITY_CHECK,
+                label="Checking Stability",
+                fg=self.INFO,
+                bg="#17364d",
+                log_message="Checking whether the detected object is stable enough for analysis.",
+            )
+
+            if object_stable:
+                self.stable_since = self.stable_since or current_time
+                stable_duration = current_time - self.stable_since
+                self.message_text.set(
+                    f"Object detected. Stability check running ({stable_duration:.1f}s / {config.OBJECT_STABILITY_DURATION_SECONDS:.1f}s)."
+                )
+                self.message_label.configure(fg=self.INFO)
+                if stable_duration >= config.OBJECT_STABILITY_DURATION_SECONDS:
+                    self.start_scan(trigger_source="automatic")
+            else:
+                self.stable_since = None
+                self.message_text.set("Object moved. Waiting for a stable view before analysis.")
+                self.message_label.configure(fg=self.WARNING)
+            return
+
+        if self.automation_state in {self.STATE_WAITING_FOR_REMOVAL, self.STATE_SHOWING_RESULT}:
+            if empty_again:
+                self.removal_since = self.removal_since or current_time
+                held_long_enough = (
+                    self.last_result_time is None
+                    or (current_time - self.last_result_time) >= config.RESULT_HOLD_MIN_SECONDS
+                )
+                if self.removal_since and held_long_enough and (current_time - self.removal_since) >= config.REMOVAL_STABILITY_SECONDS:
+                    self._transition_state(
+                        self.STATE_RESETTING,
+                        label="Resetting",
+                        fg=self.INFO,
+                        bg="#17364d",
+                        log_message="Chamber returned close to the empty reference. Resetting automation to idle.",
+                    )
+                    self._clear_meat_detection_display("Waiting for a new object.")
+                    self._clear_prediction_display("Automatic monitoring is active.")
+                    self.latest_image_path = None
+                    self.last_result_time = None
+                    self.last_reset_time = current_time
+                    self._reset_automation_tracking()
+                    self._transition_state(
+                        self.STATE_WAITING_FOR_OBJECT,
+                        label="Waiting for Object",
+                        fg=self.INFO,
+                        bg="#16344c",
+                        log_message="Reset complete. Waiting for the next object placement.",
+                    )
+                    self.message_text.set("Chamber is clear. Waiting for the next object.")
+                    self.message_label.configure(fg=self.MUTED)
+            else:
+                self.removal_since = None
+            return
+
     def _request_camera_preview_refresh(self) -> None:
         if self.preview_refresh_in_progress:
             return
-        if (time.monotonic() - self.last_preview_poll_monotonic) < config.CAMERA_PREVIEW_REFRESH_SECONDS:
+        refresh_interval = max(config.CAMERA_PREVIEW_REFRESH_SECONDS, config.OBJECT_MONITOR_INTERVAL_SECONDS)
+        if (time.monotonic() - self.last_preview_poll_monotonic) < refresh_interval:
             return
         self.preview_refresh_in_progress = True
 
@@ -658,6 +881,7 @@ class HybridFreshnessGUI:
                 self.last_preview_poll_monotonic = time.monotonic()
                 if preview_image is not None:
                     self._update_preview_from_image(preview_image)
+                    self._handle_automation_preview(preview_image)
                 elif error_message and error_message != "Camera busy.":
                     self.image_label.configure(text="Camera preview unavailable.", image="")
 
@@ -707,9 +931,9 @@ class HybridFreshnessGUI:
 
     def start_scan(self, trigger_source: str | None = None) -> None:
         if self.scan_in_progress:
-            self._set_message("A scan is already running. Please wait.", self.WARNING)
             return
         self.scan_in_progress = True
+        self._reset_automation_tracking()
         self._clear_meat_detection_display("Running meat detection from the latest captured image.")
         self._clear_prediction_display("Scanning in progress.")
 
@@ -717,7 +941,13 @@ class HybridFreshnessGUI:
             with self.camera_lock:
                 self.worker_queue.put(
                     lambda: (
-                        self._set_state("Capturing Image", self.INFO, "#17364d"),
+                        self._transition_state(
+                            self.STATE_CLASSIFYING_MEAT,
+                            label="Capturing Image",
+                            fg=self.INFO,
+                            bg="#17364d",
+                            log_message=f"Automatic analysis started from {trigger_source or 'camera'} trigger.",
+                        ),
                         self._set_message("Capturing image for automatic meat detection...", self.INFO),
                     )
                 )
@@ -727,7 +957,13 @@ class HybridFreshnessGUI:
             self.worker_queue.put(
                 lambda: (
                     self._update_image_preview(image_path),
-                    self._set_state("Detecting Meat", self.INFO, "#17364d"),
+                    self._transition_state(
+                        self.STATE_CLASSIFYING_MEAT,
+                        label="Detecting Meat",
+                        fg=self.INFO,
+                        bg="#17364d",
+                        log_message="Captured analysis image. Running meat classifier.",
+                    ),
                     self._set_message("Running meat classifier on the captured image...", self.INFO),
                 )
             )
@@ -752,14 +988,20 @@ class HybridFreshnessGUI:
 
                 self.worker_queue.put(
                     lambda: (
-                        self._set_state("Collecting Scan Data", self.INFO, "#17364d"),
+                        self._transition_state(
+                            self.STATE_STABILIZING_SENSORS,
+                            label="Reading Sensors",
+                            fg=self.INFO,
+                            bg="#17364d",
+                            log_message=f"Valid meat detected as {meat_detection.hybrid_meat_type}. Stabilizing sensors.",
+                        ),
                         self._set_message(
                             f"Detected {meat_detection.hybrid_meat_type}. Collecting MQ sensor window for freshness scan...",
                             self.INFO,
                         ),
                     )
                 )
-                sensor_snapshot = reader.stabilize(read_count=config.SCAN_SUMMARY_READS)
+                sensor_snapshot = reader.stabilize(read_count=config.AUTO_SENSOR_STABILIZATION_READ_COUNT)
                 environment_snapshot = reader.read_environment()
 
             predictor = self._get_predictor()
@@ -770,7 +1012,13 @@ class HybridFreshnessGUI:
                     self._update_environment_display(environment_snapshot),
                     self._update_image_preview(image_path),
                     self._update_meat_detection_display(meat_detection),
-                    self._set_state("Predicting", self.INFO, "#17364d"),
+                    self._transition_state(
+                        self.STATE_PREDICTING_FRESHNESS,
+                        label="Predicting Freshness",
+                        fg=self.INFO,
+                        bg="#17364d",
+                        log_message=f"Running {prediction_mode} freshness prediction for {meat_detection.hybrid_meat_type}.",
+                    ),
                     self._set_message(
                         f"Detected {meat_detection.hybrid_meat_type}. Running {prediction_mode} freshness prediction...",
                         self.INFO,
@@ -819,10 +1067,17 @@ class HybridFreshnessGUI:
             self.sensor_ready = True
             self._update_image_preview(result["image_path"])
             self._update_meat_detection_display(result["meat_detection"])
+            self.last_result_time = time.monotonic()
 
             if result["prediction"] is None:
                 self._clear_prediction_display("No valid meat detected. Freshness model was not executed.")
-                self._set_state("No Valid Meat", self.WARNING, "#4d3b1d")
+                self._transition_state(
+                    self.STATE_WAITING_FOR_REMOVAL,
+                    label="No Valid Meat",
+                    fg=self.WARNING,
+                    bg="#4d3b1d",
+                    log_message="Object rejected by the meat classifier. Waiting for removal.",
+                )
                 self._set_message(
                     "Scan stopped because the captured image was classified as not_meat. No valid meat detected.",
                     self.WARNING,
@@ -833,10 +1088,23 @@ class HybridFreshnessGUI:
             self._update_environment_display(result["environment_snapshot"])
             self._update_prediction_display(result["prediction"])
             detected_name = result["meat_detection"].hybrid_meat_type or result["meat_detection"].predicted_class
-            self._set_state("Scan Complete", self.SUCCESS, "#184236")
+            self._transition_state(
+                self.STATE_SHOWING_RESULT,
+                label="Scan Complete",
+                fg=self.SUCCESS,
+                bg="#184236",
+                log_message=f"Analysis complete. Showing result for {detected_name}.",
+            )
             self._set_message(
                 f"Scan complete. Detected {detected_name} and predicted {result['prediction']['predicted_freshness']}.",
                 self.SUCCESS,
+            )
+            self._transition_state(
+                self.STATE_WAITING_FOR_REMOVAL,
+                label="Waiting for Removal",
+                fg=self.SUCCESS,
+                bg="#184236",
+                log_message="Holding the result on screen until the object is removed.",
             )
 
         self._run_async("Start scan", work, on_success)

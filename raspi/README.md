@@ -1,54 +1,109 @@
 # FreshTo Raspberry Pi Runtime
 
-This folder contains the Raspberry Pi 5 deployment app for `FreshTo`.
+This folder contains the native Raspberry Pi 5 deployment app for `FreshTo`.
 
-## Option B Summary
+## Current Architecture
 
-This implementation follows the approved **Option B** plan:
+The app keeps the approved **Option B** pipeline:
 
-- keep the current hybrid freshness model unchanged
-- keep the current MQ sensor math unchanged
-- keep the deployment sensor alignment layer unchanged
-- add one new image classifier in front of the system
-
-That means the Raspberry Pi app now works in **two stages**:
-
-1. capture image
-2. classify image as:
+1. camera image
+2. meat classifier
    - `not_meat`
    - `chicken`
    - `pork`
    - `beef`
-3. if the result is `not_meat`
-   - stop the scan
-   - show `No valid meat detected`
+3. if `not_meat`
+   - reject
    - do not run freshness prediction
-4. if the result is `chicken`, `pork`, or `beef`
-   - pass that detected meat type into the existing hybrid freshness model
-   - run the normal freshness prediction
-   - show `Fresh`, `Neutral`, or `Spoiled`
+4. if `chicken`, `pork`, or `beef`
+   - pass detected meat type into the existing hybrid freshness model
+   - use live MQ sensor ratios and image features
+5. output freshness
+   - `Fresh`
+   - `Neutral`
+   - `Spoiled`
 
-## What Stayed Unchanged
+The existing hybrid freshness model, MQ math, deployment alignment, and feature order are kept unchanged.
 
-The following parts were intentionally left as they were:
+## Fully Automatic Flow
 
-- MQ sensor reading through ADS1115
-- voltage, `Rs`, and `Rs/Ro` computation
-- deployment sensor alignment
-- feature order used by the freshness model
-- existing hybrid freshness model artifacts
+The Raspberry Pi app is now fully automatic.
+
+Flow:
+
+1. wait for sensor warm-up
+2. load the empty chamber reference image
+3. monitor the chamber continuously using low-rate preview frames
+4. compare each preview frame against the empty chamber reference
+5. if a new object appears, run a short stability check
+6. after the object stays stable long enough:
+   - capture the analysis image
+   - run the meat classifier
+7. if the classifier says `not_meat`
+   - show `No valid meat detected`
+   - wait for object removal
+8. if the classifier says `chicken`, `pork`, or `beef`
+   - stabilize sensors
+   - run the existing hybrid freshness model
+   - show detected meat type and freshness result
+9. keep the result on screen while the object stays inside
+10. when the object is removed and the chamber becomes close to the empty reference again, reset automatically to idle monitoring
+
+## State Machine
+
+The automatic runtime uses clear states:
+
+- `INITIALIZING`
+- `WARMING_UP`
+- `WAITING_FOR_OBJECT`
+- `OBJECT_DETECTED`
+- `STABILITY_CHECK`
+- `CLASSIFYING_MEAT`
+- `STABILIZING_SENSORS`
+- `PREDICTING_FRESHNESS`
+- `SHOWING_RESULT`
+- `WAITING_FOR_REMOVAL`
+- `RESETTING`
+
+State changes are logged in the debug log panel and in `logs/raspi_app.log`.
+
+## Empty Chamber Reference
+
+The chamber monitor compares preview frames against:
+
+- `captures/empty_chamber_reference.jpg`
+
+If the reference image is missing and automatic reference capture is enabled, the app saves the current preview frame as the empty chamber reference at startup.
+
+Important:
+
+- start the system with an empty chamber whenever possible
+- that gives the automation a correct baseline image for object detection
+
+## Physical Buttons
+
+The app no longer uses physical buttons to trigger scans.
+
+Current button behavior:
+
+- GPIO17 = scroll up
+- GPIO27 = scroll down
+- GPIO22 = reserved / unused
+
+The analysis cycle is now started automatically by camera-based chamber detection.
 
 ## Main Files
 
 - `app.py`
-  - native Raspberry Pi touchscreen GUI
-  - live camera feed
-  - auto scan flow
-  - hardware button trigger support
-  - meat detection stage
-  - freshness result stage
+  - main automatic GUI
+  - state machine
+  - chamber monitoring
+  - result display
+- `chamber_detector.py`
+  - lightweight empty-chamber difference logic
+  - frame preparation and difference scoring
 - `meat_classifier.py`
-  - loads the new image meat classifier
+  - loads the new image classifier
   - returns detected meat type and confidence
 - `predict_live.py`
   - existing freshness predictor
@@ -56,92 +111,28 @@ The following parts were intentionally left as they were:
 - `sensor_reader.py`
   - ADS1115 + MQ + DHT22 reading
 - `camera_capture.py`
-  - Raspberry Pi camera capture
+  - Raspberry Pi camera capture and preview
+- `button_input.py`
+  - physical scroll button support
 - `config.py`
-  - runtime paths and settings
+  - runtime paths and automation settings
 
-## New Meat Classifier Artifacts
+## Important Config Settings
 
-The new image classifier is expected here:
+These settings can be edited in `config.py`:
 
-- `..\model\meat_classifier\meat_classifier.keras`
-- `..\model\meat_classifier\class_names.json`
-- `..\model\meat_classifier\metadata.json`
-
-You can train this classifier on your laptop first, then copy the whole `meat_classifier` folder into the Raspberry Pi `model` folder.
-
-The existing freshness model still lives here:
-
-- `..\model\hybrid_freshness_model.joblib`
-- `..\model\freshness_label_encoder.joblib`
-- `..\model\hybrid_preprocessor.joblib`
-- `..\model\training_metadata.json`
-
-## Meat Classifier Dataset Structure
-
-Train the new image classifier using either:
-
-```text
-dataset/
-  not_meat/
-  chicken/
-  pork/
-  beef/
-```
-
-or the current FreshTo image folder layout:
-
-```text
-Dataset/
-  Image/
-    not_meat/
-    chicken_fresh/
-    chicken_neutral/
-    chicken_spoiled/
-    pork_fresh/
-    pork_neutral/
-    pork_spoiled/
-    beef_fresh/
-    beef_neutral/
-    beef_spoiled/
-```
-
-The updated trainer can read that existing layout directly, so you do not need to reorganize all image folders first.
-
-### If You Are Short On Time For `not_meat`
-
-You do not need a huge `not_meat` dataset to get started.
-
-A practical first pass is to collect images such as:
-
-- empty chamber
-- chamber lid only
-- tissue or paper only
-- plastic tray only
-- hand in frame
-- table surface
-- blurred frames
-- wrong camera angle
-
-Even a small first set is useful because the only job of `not_meat` is to stop the freshness model when no valid meat is visible.
-
-## How The App Works Now
-
-1. power on the Raspberry Pi and sensors
-2. wait for warm-up to complete
-3. press any wired hardware button
-4. the app captures an image
-5. the app runs the new meat classifier
-6. if image = `not_meat`
-   - scan stops
-   - screen shows `No valid meat detected`
-7. if image = `chicken`, `pork`, or `beef`
-   - app collects the short MQ sensor scan window
-   - app runs the existing hybrid freshness predictor
-   - screen shows:
-     - detected meat type
-     - meat classifier confidence
-     - freshness result
+- `EMPTY_CHAMBER_REFERENCE_IMAGE_PATH`
+- `OBJECT_DETECTION_THRESHOLD`
+- `OBJECT_STABILITY_DURATION_SECONDS`
+- `OBJECT_STABLE_FRAME_DIFF_THRESHOLD`
+- `OBJECT_MONITOR_INTERVAL_SECONDS`
+- `REMOVAL_DETECTION_THRESHOLD`
+- `REMOVAL_STABILITY_SECONDS`
+- `RESULT_HOLD_MIN_SECONDS`
+- `AUTO_RESET_COOLDOWN_SECONDS`
+- `AUTO_SENSOR_STABILIZATION_READ_COUNT`
+- `SCROLL_UP_GPIO_PIN`
+- `SCROLL_DOWN_GPIO_PIN`
 
 ## Install Dependencies
 
@@ -197,8 +188,8 @@ python3 app.py
 ## Notes
 
 - the UI is native Raspberry Pi GUI, not a website
-- the three existing hardware buttons are now used as **scan triggers**
-- meat type is detected automatically from the image
+- the system is now camera-triggered and fully automatic
+- the meat classifier still acts as the first gate before freshness prediction
 - the existing hybrid freshness model is still the final freshness classifier
-- deployment sensor alignment is still active so live Raspberry Pi ratios stay on the same scale used by the current freshness deployment setup
+- deployment sensor alignment is still active
 - the freshness model feature order was not changed
