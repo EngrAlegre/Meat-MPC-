@@ -139,6 +139,7 @@ class HybridFreshnessGUI:
         self.scan_in_progress = False
         self.model_preload_started = False
         self.model_preload_complete = False
+        self.camera_display_size = (900, 500) if not self.compact_layout else (720, 405)
 
         self._configure_styles()
         self._build_layout()
@@ -309,6 +310,8 @@ class HybridFreshnessGUI:
         image_frame.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
         image_frame.columnconfigure(0, weight=1)
         image_frame.rowconfigure(0, weight=1)
+        image_frame.grid_propagate(False)
+        image_frame.configure(width=self.camera_display_size[0], height=self.camera_display_size[1])
 
         self.image_label = tk.Label(
             image_frame,
@@ -757,16 +760,28 @@ class HybridFreshnessGUI:
     def _update_image_preview(self, image_path: Path) -> None:
         self.latest_image_path = image_path
         image = Image.open(image_path).convert("RGB")
-        image = ImageOps.contain(image, (520, 360))
-        photo = ImageTk.PhotoImage(image)
+        photo = ImageTk.PhotoImage(self._prepare_display_image(image))
         self.last_photo_image = photo
         self.image_label.configure(image=photo, text="")
 
     def _update_preview_from_image(self, image: Image.Image) -> None:
         self.current_preview_image = image.copy()
-        photo = ImageTk.PhotoImage(image)
+        photo = ImageTk.PhotoImage(self._prepare_display_image(image))
         self.last_photo_image = photo
         self.image_label.configure(image=photo, text="")
+
+    def _prepare_display_image(self, image: Image.Image) -> Image.Image:
+        target_width, target_height = self.camera_display_size
+        try:
+            resample = Image.Resampling.LANCZOS
+        except AttributeError:  # pragma: no cover - Pillow compatibility
+            resample = Image.LANCZOS
+        return ImageOps.fit(
+            image.convert("RGB"),
+            (target_width, target_height),
+            method=resample,
+            centering=(0.5, 0.5),
+        )
 
     def _handle_automation_preview(self, preview_image: Image.Image) -> None:
         if not getattr(config, "AUTOMATION_ENABLED", True):
