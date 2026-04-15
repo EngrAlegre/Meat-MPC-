@@ -116,11 +116,11 @@ class HybridFreshnessGUI:
         self.sensor_ready = False
         self.last_photo_image = None
         self.current_preview_image: Image.Image | None = None
-        self.empty_reference_frame: np.ndarray | None = (
-            None
-            if getattr(config, "ALWAYS_CAPTURE_EMPTY_REFERENCE_ON_STARTUP", False)
-            else load_reference_frame(config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH)
-        )
+        self.empty_reference_frame: np.ndarray | None = None
+        if getattr(config, "ALWAYS_CAPTURE_EMPTY_REFERENCE_ON_STARTUP", False):
+            self.empty_reference_frame = None
+        elif getattr(config, "AUTO_CAPTURE_EMPTY_REFERENCE_IF_MISSING", True):
+            self.empty_reference_frame = load_reference_frame(config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH)
         self.automation_state = self.STATE_INITIALIZING
         self.object_detected_since: float | None = None
         self.stable_since: float | None = None
