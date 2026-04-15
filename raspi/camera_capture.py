@@ -96,6 +96,17 @@ class CameraCaptureService:
             "No camera is available. Check the Raspberry Pi camera connection and Picamera2 setup."
         )
 
+    def save_image(self, image: Image.Image, prefix: str | None = None) -> Path:
+        prefix = prefix or config.CAMERA_FILENAME_PREFIX
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        image_path = self.output_dir / f"{prefix}_{timestamp}.jpg"
+        try:
+            image.convert("RGB").save(image_path, format="JPEG", quality=95)
+            LOGGER.info("Image saved from preview frame: %s", image_path)
+            return image_path
+        except Exception as exc:
+            raise CameraCaptureError(f"Failed to save preview image: {exc}") from exc
+
     def get_preview_image(self, size: tuple[int, int] | None = None) -> Image.Image:
         size = size or config.CAMERA_PREVIEW_SIZE
 

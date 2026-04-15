@@ -948,10 +948,14 @@ class HybridFreshnessGUI:
                             bg="#17364d",
                             log_message=f"Automatic analysis started from {trigger_source or 'camera'} trigger.",
                         ),
-                        self._set_message("Capturing image for automatic meat detection...", self.INFO),
+                        self._set_message("Saving the current stable preview frame for automatic meat detection...", self.INFO),
                     )
                 )
-                image_path = self._get_camera_service().capture_image()
+                camera_service = self._get_camera_service()
+                if self.current_preview_image is not None:
+                    image_path = camera_service.save_image(self.current_preview_image, prefix="auto_scan")
+                else:
+                    image_path = camera_service.capture_image(prefix="auto_scan")
 
             meat_classifier = self._get_meat_classifier()
             self.worker_queue.put(
