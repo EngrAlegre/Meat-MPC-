@@ -51,7 +51,7 @@ class ScrollButtonController:
         try:
             button = Button(
                 pin,
-                pull_up=True,
+                pull_up=config.BUTTON_PULL_UP,
                 bounce_time=config.BUTTON_BOUNCE_SECONDS,
             )
             button.when_pressed = callback
@@ -75,9 +75,10 @@ class ScrollButtonController:
 
     def status_summary(self) -> str:
         available = ", ".join(sorted(self._buttons.keys())) or "none"
+        mode = "pull_up" if config.BUTTON_PULL_UP else "pull_down"
         if not self._errors:
-            return f"available={available}"
-        return f"available={available} | errors={' ; '.join(self._errors)}"
+            return f"available={available} | mode={mode}"
+        return f"available={available} | mode={mode} | errors={' ; '.join(self._errors)}"
 
     def close(self) -> None:
         for button in self._buttons.values():
