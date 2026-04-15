@@ -116,7 +116,11 @@ class HybridFreshnessGUI:
         self.sensor_ready = False
         self.last_photo_image = None
         self.current_preview_image: Image.Image | None = None
-        self.empty_reference_frame: np.ndarray | None = load_reference_frame(config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH)
+        self.empty_reference_frame: np.ndarray | None = (
+            None
+            if getattr(config, "ALWAYS_CAPTURE_EMPTY_REFERENCE_ON_STARTUP", False)
+            else load_reference_frame(config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH)
+        )
         self.automation_state = self.STATE_INITIALIZING
         self.object_detected_since: float | None = None
         self.stable_since: float | None = None
@@ -637,7 +641,7 @@ class HybridFreshnessGUI:
                         log_message=(
                             "Warm-up complete. Monitoring chamber for new objects."
                             if self.empty_reference_frame is not None
-                            else "Warm-up complete. Waiting to capture empty chamber reference."
+                            else "Warm-up complete. Capturing a fresh empty chamber baseline before monitoring starts."
                         ),
                     )
         except SensorInitializationError as exc:

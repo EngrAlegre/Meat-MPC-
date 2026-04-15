@@ -32,7 +32,7 @@ The Raspberry Pi app is now fully automatic.
 Flow:
 
 1. wait for sensor warm-up
-2. load the empty chamber reference image
+2. capture a fresh empty chamber reference image at startup
 3. monitor the chamber continuously using low-rate preview frames
 4. compare each preview frame against the empty chamber reference
 5. if a new object appears, run a short stability check
@@ -73,12 +73,13 @@ The chamber monitor compares preview frames against:
 
 - `captures/empty_chamber_reference.jpg`
 
-If the reference image is missing and automatic reference capture is enabled, the app saves the current preview frame as the empty chamber reference at startup.
+The app now captures a fresh empty chamber reference at startup after warm-up and overwrites the saved reference image. That fresh baseline is then used for object detection during the current runtime session.
 
 Important:
 
 - start the system with an empty chamber whenever possible
-- that gives the automation a correct baseline image for object detection
+- the app will capture that empty view first and save it as the new baseline
+- that fresh baseline is what later object detection is compared against
 
 ## Physical Buttons
 
@@ -122,6 +123,7 @@ The analysis cycle is now started automatically by camera-based chamber detectio
 These settings can be edited in `config.py`:
 
 - `EMPTY_CHAMBER_REFERENCE_IMAGE_PATH`
+- `ALWAYS_CAPTURE_EMPTY_REFERENCE_ON_STARTUP`
 - `OBJECT_DETECTION_THRESHOLD`
 - `OBJECT_STABILITY_DURATION_SECONDS`
 - `OBJECT_STABLE_FRAME_DIFF_THRESHOLD`
