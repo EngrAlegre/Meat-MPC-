@@ -85,7 +85,7 @@ class HybridFreshnessGUI:
         self.button_controller: ScrollButtonController | None = None
 
         self.system_state = tk.StringVar(value="Initializing")
-        self.message_text = tk.StringVar(value="Starting FreshTo automatic monitoring...")
+        self.message_text = tk.StringVar(value="Starting FreshTo. Capture the empty chamber reference after warm-up to begin automatic monitoring.")
         self.warmup_text = tk.StringVar(value="Warm-up status unavailable")
         self.model_mode_text = tk.StringVar(value=f"Freshness mode: {getattr(config, 'MODEL_MODE', 'hybrid')}")
         self.detected_meat_text = tk.StringVar(value="--")
@@ -139,6 +139,7 @@ class HybridFreshnessGUI:
         self.scan_in_progress = False
         self.model_preload_started = False
         self.model_preload_complete = False
+        self.reference_capture_in_progress = False
         self.camera_display_size = (900, 500) if not self.compact_layout else (720, 405)
 
         self._configure_styles()
@@ -330,7 +331,7 @@ class HybridFreshnessGUI:
         ttk.Label(panel, text="Prediction Result", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(
             panel,
-            text="The system now watches the chamber automatically. Physical buttons are used only for scrolling the touchscreen view.",
+            text="Use the third physical button to capture the empty chamber reference. After that, the system watches the chamber automatically.",
             style="Body.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(4, 12))
         tk.Label(
@@ -344,11 +345,11 @@ class HybridFreshnessGUI:
 
         trigger_frame = tk.Frame(panel, bg=self.PANEL)
         trigger_frame.grid(row=3, column=0, sticky="ew", pady=(0, 12))
-        ttk.Label(trigger_frame, text="Physical Scroll Buttons", style="Body.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        ttk.Label(trigger_frame, text="Physical Buttons", style="Body.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         trigger_row = tk.Frame(trigger_frame, bg=self.PANEL)
         trigger_row.grid(row=1, column=0, sticky="ew")
-        trigger_labels = ("Scroll Up", "Scroll Down", "Reserved")
+        trigger_labels = ("Scroll Up", "Scroll Down", "Capture Empty Ref")
         for idx, label in enumerate(trigger_labels):
             badge = tk.Label(
                 trigger_row,
@@ -549,6 +550,15 @@ class HybridFreshnessGUI:
 
     def _handle_error(self, task_name: str, exc: Exception) -> None:
         self.scan_in_progress = False
+        if task_name.lower() == "capture empty reference":
+            self.reference_capture_in_progress = False
+            self._transition_state(
+                self.STATE_INITIALIZING,
+                label="Capture Empty Chamber",
+                fg=self.WARNING,
+                bg="#4d3b1d",
+                log_message="Empty chamber reference capture failed. Waiting for another button press.",
+            )
         if task_name.lower() == "start scan":
             self._clear_meat_detection_display("The latest scan failed before meat detection could complete.")
             self._clear_prediction_display("The latest scan failed. Please try again.")
@@ -569,6 +579,7 @@ class HybridFreshnessGUI:
             self.button_controller = ScrollButtonController(
                 on_scroll_up=lambda: self.worker_queue.put(lambda: self._scroll_content(-1)),
                 on_scroll_down=lambda: self.worker_queue.put(lambda: self._scroll_content(1)),
+                on_capture_empty_reference=lambda: self.worker_queue.put(self.capture_empty_reference),
             )
         except ButtonInputError as exc:
             self._append_log(str(exc))
@@ -621,6 +632,57 @@ class HybridFreshnessGUI:
         )
         return True
 
+    def capture_empty_reference(self) -> None:
+        if self.scan_in_progress or self.reference_capture_in_progress:
+            self._append_log("Empty chamber capture ignored because another task is already running.")
+            return
+
+        self.reference_capture_in_progress = True
+        self._transition_state(
+            self.STATE_INITIALIZING,
+            label="Capturing Empty Chamber",
+            fg=self.INFO,
+            bg="#16344c",
+            log_message="Starting empty chamber reference capture from the physical button.",
+        )
+
+        def work() -> bool:
+            preview_image = self.current_preview_image
+            acquired = self.camera_lock.acquire(timeout=5.0)
+            if not acquired:
+                raise RuntimeError("Camera is busy. Please wait a moment and press the empty reference button again.")
+            try:
+                if preview_image is None:
+                    preview_image = self._get_camera_service().get_preview_image()
+                return self._capture_empty_reference_from_live_preview(preview_image)
+            finally:
+                self.camera_lock.release()
+
+        def on_success(captured: bool) -> None:
+            self.reference_capture_in_progress = False
+            if not captured or self.empty_reference_frame is None:
+                self._set_message("Failed to capture the empty chamber reference.", self.DANGER)
+                self._transition_state(
+                    self.STATE_INITIALIZING,
+                    label="Capture Empty Chamber",
+                    fg=self.WARNING,
+                    bg="#4d3b1d",
+                    log_message="Empty chamber reference capture did not complete.",
+                )
+                return
+
+            self._reset_automation_tracking()
+            self._set_message("Empty chamber reference captured. Automatic monitoring is now active.", self.SUCCESS)
+            self._transition_state(
+                self.STATE_WAITING_FOR_OBJECT,
+                label="Waiting for Object",
+                fg=self.INFO,
+                bg="#16344c",
+                log_message="Empty chamber reference ready. Automatic monitoring is active.",
+            )
+
+        self._run_async("Capture Empty Reference", work, on_success)
+
     def _ensure_empty_reference(self, preview_image: Image.Image | None = None) -> bool:
         if self.empty_reference_frame is not None:
             return True
@@ -655,20 +717,15 @@ class HybridFreshnessGUI:
                     self.STATE_INITIALIZING,
                     self.STATE_WARMING_UP,
                 }:
-                    waiting_label = (
-                        "Waiting for Object"
-                        if self.empty_reference_frame is not None
-                        else "Capturing Empty Chamber"
-                    )
                     self._transition_state(
                         self.STATE_WAITING_FOR_OBJECT if self.empty_reference_frame is not None else self.STATE_INITIALIZING,
-                        label=waiting_label,
-                        fg=self.INFO,
-                        bg="#16344c",
+                        label="Waiting for Object" if self.empty_reference_frame is not None else "Capture Empty Chamber",
+                        fg=self.INFO if self.empty_reference_frame is not None else self.WARNING,
+                        bg="#16344c" if self.empty_reference_frame is not None else "#4d3b1d",
                         log_message=(
                             "Warm-up complete. Monitoring chamber for new objects."
                             if self.empty_reference_frame is not None
-                            else "Warm-up complete. Capturing a fresh empty chamber baseline before monitoring starts."
+                            else "Warm-up complete. Press the third physical button to capture the empty chamber reference and start monitoring."
                         ),
                     )
         except SensorInitializationError as exc:
@@ -788,18 +845,12 @@ class HybridFreshnessGUI:
             return
         if self.scan_in_progress:
             return
+        if self.reference_capture_in_progress:
+            return
         if self.automation_state == self.STATE_WARMING_UP:
             return
 
         if self.empty_reference_frame is None:
-            if self._ensure_empty_reference(preview_image):
-                self._transition_state(
-                    self.STATE_WAITING_FOR_OBJECT,
-                    label="Waiting for Object",
-                    fg=self.INFO,
-                    bg="#16344c",
-                    log_message="Empty chamber reference ready. Automatic monitoring is active.",
-                )
             return
 
         current_frame = prepare_detection_frame(preview_image)
