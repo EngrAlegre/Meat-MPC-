@@ -145,6 +145,7 @@ class HybridFreshnessGUI:
         self._configure_styles()
         self._build_layout()
         self._setup_hardware_buttons()
+        self._schedule_button_poll()
         self._schedule_worker_poll()
         self._schedule_status_refresh()
         self._preload_models_async()
@@ -466,6 +467,14 @@ class HybridFreshnessGUI:
             pass
         self.root.after(120, self._schedule_worker_poll)
 
+    def _schedule_button_poll(self) -> None:
+        if self.button_controller is not None:
+            try:
+                self.button_controller.poll()
+            except Exception as exc:
+                self._append_log(f"Button poll error: {exc}")
+        self.root.after(80, self._schedule_button_poll)
+
     def _on_canvas_configure(self, event: tk.Event) -> None:
         self.content_canvas.itemconfigure(self.content_window, width=event.width)
 
@@ -577,9 +586,9 @@ class HybridFreshnessGUI:
     def _setup_hardware_buttons(self) -> None:
         try:
             self.button_controller = ScrollButtonController(
-                on_scroll_up=lambda: self.worker_queue.put(lambda: self._scroll_content(-1)),
-                on_scroll_down=lambda: self.worker_queue.put(lambda: self._scroll_content(1)),
-                on_capture_empty_reference=lambda: self.worker_queue.put(self.capture_empty_reference),
+                on_scroll_up=lambda: self._scroll_content(-1),
+                on_scroll_down=lambda: self._scroll_content(1),
+                on_capture_empty_reference=self.capture_empty_reference,
             )
             self._append_log(f"Physical button controller ready: {self.button_controller.status_summary()}")
         except ButtonInputError as exc:
@@ -993,16 +1002,15 @@ class HybridFreshnessGUI:
             preview_image = None
             error_message = None
             acquired = self.camera_lock.acquire(blocking=False)
-            try:
-                if not acquired:
-                    error_message = "Camera busy."
-                    return
-                preview_image = self._get_camera_service().get_preview_image()
-            except Exception as exc:
-                error_message = str(exc)
-            finally:
-                if acquired:
+            if acquired:
+                try:
+                    preview_image = self._get_camera_service().get_preview_image()
+                except Exception as exc:
+                    error_message = str(exc)
+                finally:
                     self.camera_lock.release()
+            else:
+                error_message = "Camera busy."
 
             def apply_preview() -> None:
                 self.preview_refresh_in_progress = False
@@ -1254,6 +1262,8 @@ class HybridFreshnessGUI:
         try:
             if self.button_controller is not None:
                 self.button_controller.close()
+            if self.camera_service is not None:
+                self.camera_service.close()
             if self.sensor_reader is not None:
                 self.sensor_reader.close()
         finally:

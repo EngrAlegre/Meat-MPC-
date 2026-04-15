@@ -19,6 +19,9 @@ class ButtonInputError(RuntimeError):
 
 
 class ScrollButtonController:
+    """Detects physical button presses via Tk-thread polling (no gpiozero
+    background-thread dependency, which can be unreliable on RPi5/lgpio)."""
+
     def __init__(
         self,
         *,
@@ -32,14 +35,13 @@ class ScrollButtonController:
             )
 
         self._buttons: dict[str, Button] = {}
-        self._on_scroll_up = on_scroll_up
-        self._on_scroll_down = on_scroll_down
-        self._on_capture_empty_reference = on_capture_empty_reference
+        self._callbacks: dict[str, Callable[[], None]] = {}
+        self._last_pressed: dict[str, bool] = {}
         self._errors: list[str] = []
 
-        self._init_button("scroll_up", config.SCROLL_UP_GPIO_PIN, self._handle_scroll_up)
-        self._init_button("scroll_down", config.SCROLL_DOWN_GPIO_PIN, self._handle_scroll_down)
-        self._init_button("capture_empty_reference", config.RESERVED_BUTTON_GPIO_PIN, self._handle_capture_empty_reference)
+        self._add_button("scroll_up", config.SCROLL_UP_GPIO_PIN, on_scroll_up)
+        self._add_button("scroll_down", config.SCROLL_DOWN_GPIO_PIN, on_scroll_down)
+        self._add_button("capture_empty_reference", config.RESERVED_BUTTON_GPIO_PIN, on_capture_empty_reference)
 
         if not self._buttons:
             details = "; ".join(self._errors) if self._errors else "unknown GPIO initialization error"
@@ -47,31 +49,38 @@ class ScrollButtonController:
 
         LOGGER.info("Buttons initialized: %s", self.status_summary())
 
-    def _init_button(self, name: str, pin: int, callback: Callable[[], None]) -> None:
+    def _add_button(self, name: str, pin: int, callback: Callable[[], None]) -> None:
         try:
             button = Button(
                 pin,
                 pull_up=config.BUTTON_PULL_UP,
                 bounce_time=config.BUTTON_BOUNCE_SECONDS,
             )
-            button.when_pressed = callback
             self._buttons[name] = button
+            self._callbacks[name] = callback
+            self._last_pressed[name] = bool(button.is_pressed)
         except Exception as exc:  # pragma: no cover - hardware specific
             message = f"{name} on GPIO{pin} failed: {exc}"
             self._errors.append(message)
             LOGGER.warning(message)
 
-    def _handle_scroll_up(self) -> None:
-        LOGGER.info("Physical scroll-up button pressed.")
-        self._on_scroll_up()
+    def poll(self) -> None:
+        """Call from the Tk main-thread timer to detect rising-edge presses."""
+        for name, button in self._buttons.items():
+            try:
+                pressed_now = bool(button.is_pressed)
+            except Exception as exc:  # pragma: no cover - hardware specific
+                LOGGER.warning("Failed to read %s: %s", name, exc)
+                continue
 
-    def _handle_scroll_down(self) -> None:
-        LOGGER.info("Physical scroll-down button pressed.")
-        self._on_scroll_down()
+            was_pressed = self._last_pressed.get(name, False)
+            self._last_pressed[name] = pressed_now
 
-    def _handle_capture_empty_reference(self) -> None:
-        LOGGER.info("Physical capture-empty-reference button pressed.")
-        self._on_capture_empty_reference()
+            if pressed_now and not was_pressed:
+                LOGGER.info("Physical %s button pressed.", name)
+                callback = self._callbacks.get(name)
+                if callback is not None:
+                    callback()
 
     def status_summary(self) -> str:
         available = ", ".join(sorted(self._buttons.keys())) or "none"
