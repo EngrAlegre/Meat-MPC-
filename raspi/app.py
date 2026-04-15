@@ -462,7 +462,14 @@ class HybridFreshnessGUI:
         try:
             while True:
                 callback = self.worker_queue.get_nowait()
-                callback()
+                try:
+                    callback()
+                except Exception as exc:
+                    LOGGER.exception("Worker callback failed")
+                    try:
+                        self._append_log(f"Internal callback error: {exc}")
+                    except Exception:
+                        pass
         except queue.Empty:
             pass
         self.root.after(120, self._schedule_worker_poll)
@@ -1019,7 +1026,8 @@ class HybridFreshnessGUI:
                     self._update_preview_from_image(preview_image)
                     self._handle_automation_preview(preview_image)
                 elif error_message and error_message != "Camera busy.":
-                    self.image_label.configure(text="Camera preview unavailable.", image="")
+                    self.image_label.configure(text=f"Camera error: {error_message}", image="")
+                    self._append_log(f"Camera preview failed: {error_message}")
 
             self.worker_queue.put(apply_preview)
 

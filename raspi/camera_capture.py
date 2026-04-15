@@ -31,10 +31,12 @@ class CameraCaptureService:
         self.output_dir = output_dir or config.CAMERA_OUTPUT_DIR
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._picamera2 = None
+        self._picamera2_init_failed = False
         self._fallback_capture = None
+        self._fallback_init_failed = False
 
     def _initialize_picamera2(self) -> bool:
-        if Picamera2 is None:
+        if Picamera2 is None or self._picamera2_init_failed:
             return False
 
         if self._picamera2 is not None:
@@ -42,34 +44,40 @@ class CameraCaptureService:
 
         try:
             camera = Picamera2()
-            still_config = camera.create_still_configuration(
-                main={"size": config.CAMERA_STILL_SIZE}
+            preview_config = camera.create_preview_configuration(
+                main={"size": config.CAMERA_PREVIEW_SIZE}
             )
-            camera.configure(still_config)
+            camera.configure(preview_config)
             camera.start()
             time.sleep(config.CAMERA_STARTUP_DELAY_SECONDS)
             self._picamera2 = camera
-            LOGGER.info("Pi camera initialized with Picamera2.")
+            LOGGER.info("Pi camera initialized with Picamera2 (preview mode %s).", config.CAMERA_PREVIEW_SIZE)
             return True
         except Exception as exc:  # pragma: no cover - hardware-specific
             LOGGER.warning("Picamera2 initialization failed: %s", exc)
             self._picamera2 = None
+            self._picamera2_init_failed = True
             return False
 
     def _initialize_opencv_fallback(self) -> bool:
-        if not config.ALLOW_OPENCV_CAMERA_FALLBACK or cv2 is None:
+        if not config.ALLOW_OPENCV_CAMERA_FALLBACK or cv2 is None or self._fallback_init_failed:
             return False
 
         if self._fallback_capture is not None:
             return True
 
-        capture = cv2.VideoCapture(0)
-        if not capture.isOpened():
+        try:
+            capture = cv2.VideoCapture(0)
+            if not capture.isOpened():
+                self._fallback_init_failed = True
+                return False
+            self._fallback_capture = capture
+            LOGGER.warning("Using OpenCV camera fallback instead of Picamera2.")
+            return True
+        except Exception as exc:  # pragma: no cover - environment-specific
+            LOGGER.warning("OpenCV camera fallback failed: %s", exc)
+            self._fallback_init_failed = True
             return False
-
-        self._fallback_capture = capture
-        LOGGER.warning("Using OpenCV camera fallback instead of Picamera2.")
-        return True
 
     def capture_image(self, prefix: str | None = None) -> Path:
         prefix = prefix or config.CAMERA_FILENAME_PREFIX
@@ -78,7 +86,10 @@ class CameraCaptureService:
 
         if self._initialize_picamera2():
             try:
-                self._picamera2.capture_file(str(image_path))
+                still_config = self._picamera2.create_still_configuration(
+                    main={"size": config.CAMERA_STILL_SIZE}
+                )
+                self._picamera2.switch_mode_and_capture_file(still_config, str(image_path))
                 LOGGER.info("Image captured via Picamera2: %s", image_path)
                 return image_path
             except Exception as exc:  # pragma: no cover - hardware-specific
