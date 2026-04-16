@@ -1055,11 +1055,11 @@ class HybridFreshnessGUI:
         self.latest_meat_detection = result
         if result.predicted_class == config.MEAT_CLASSIFIER_NOT_MEAT_LABEL:
             self.detected_meat_text.set("No valid meat")
-            self.detected_meat_note_text.set("Freshness prediction was skipped because the image was classified as not_meat.")
+            self.detected_meat_note_text.set("Freshness prediction was skipped because no valid meat was detected.")
         else:
             detected_name = result.hybrid_meat_type or result.predicted_class.replace("_", " ").title()
             self.detected_meat_text.set(detected_name)
-            self.detected_meat_note_text.set("Detected from the new Option B image classifier before running freshness prediction.")
+            self.detected_meat_note_text.set("Detected via image classification. Proceeding to freshness prediction.")
         self.detected_meat_confidence_text.set(f"Confidence: {result.confidence:.4f}")
 
     def _clear_meat_detection_display(self, note: str = "Waiting for a new scan.") -> None:

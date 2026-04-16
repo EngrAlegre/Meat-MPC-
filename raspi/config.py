@@ -67,8 +67,8 @@ MEAT_CLASSIFIER_TO_HYBRID_MEAT_TYPE = {
 # - "hybrid" fuses image-only model scores with sensor nearest-class scores
 MODEL_MODE = "hybrid"
 
-HYBRID_IMAGE_WEIGHT = 0.35
-HYBRID_SENSOR_WEIGHT = 0.65
+HYBRID_IMAGE_WEIGHT = 0.65
+HYBRID_SENSOR_WEIGHT = 0.35
 
 ADS_I2C_ADDRESS = 0x48
 ADS_GAIN = 1
@@ -122,7 +122,7 @@ DHT22_REFRESH_SECONDS = 3.0
 # stay on the same feature scale as the training-time collection setup.
 # This is not thresholding or rule-based classification; the ML model remains
 # the final decision-maker.
-RUNTIME_RATIO_ADJUSTMENT_ENABLED = True
+RUNTIME_RATIO_ADJUSTMENT_ENABLED = False
 RUNTIME_RATIO_SCALE = {
     "nh3_ratio": 0.7071,
     "h2s_ratio": 0.3769,
@@ -132,12 +132,12 @@ RUNTIME_RATIO_SCALE = {
 # Product rule requested for deployment behavior:
 # if either NH3 or H2S ratio falls below the threshold, force the final result
 # to Spoiled. VOC is not used for this rule.
-SPOILED_OVERRIDE_ENABLED = True
+SPOILED_OVERRIDE_ENABLED = False
 SPOILED_OVERRIDE_RATIO_THRESHOLD = 0.25
 
 # Product rule for borderline cases: if the final fused confidence is too low,
 # return Neutral instead of allowing a weak Fresh/Spoiled decision.
-LOW_CONFIDENCE_NEUTRAL_OVERRIDE_ENABLED = True
+LOW_CONFIDENCE_NEUTRAL_OVERRIDE_ENABLED = False
 LOW_CONFIDENCE_NEUTRAL_THRESHOLD = 0.45
 
 

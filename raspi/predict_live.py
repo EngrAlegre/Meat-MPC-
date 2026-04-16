@@ -296,18 +296,40 @@ class HybridFreshnessPredictor:
         )
         return overridden, override_note
 
+    def _fmt_probs(self, probs: dict[str, float] | None) -> str:
+        if not probs:
+            return "N/A"
+        return " | ".join(f"{label}={score:.4f}" for label, score in probs.items())
+
     def predict(self, image_path: str | Path, meat_type: str, sensor_values: dict[str, Any]) -> LivePredictionResult:
         normalized_sensor_values = self._normalize_sensor_values(sensor_values)
         image_probabilities: dict[str, float] | None = None
         sensor_probabilities: dict[str, float] | None = None
         image_features: dict[str, float] = {}
 
+        LOGGER.info(
+            "--- PREDICTION START | meat_type=%s | mode=%s ---",
+            meat_type, self.mode,
+        )
+        LOGGER.info(
+            "Sensor input (Rs/Ro) | NH3=%.4f H2S=%.4f VOC=%.4f",
+            float(normalized_sensor_values["nh3_ratio"]),
+            float(normalized_sensor_values["h2s_ratio"]),
+            float(normalized_sensor_values["voc_ratio"]),
+        )
+
         if self.mode in {"image_only", "hybrid"}:
             image_probabilities, image_features = self._predict_image_probabilities(image_path, meat_type)
+            LOGGER.info("Image branch  | %s", self._fmt_probs(image_probabilities))
         if self.mode in {"sensor_only", "hybrid"}:
             sensor_probabilities = self._predict_sensor_probabilities(meat_type, sensor_values)
+            LOGGER.info("Sensor branch | %s", self._fmt_probs(sensor_probabilities))
 
         class_probabilities, confidence_note = self._fuse_probabilities(image_probabilities, sensor_probabilities)
+        fused_label = max(class_probabilities, key=class_probabilities.get)
+        LOGGER.info("Fused result  | %s (top: %s=%.4f)", self._fmt_probs(class_probabilities), fused_label, class_probabilities[fused_label])
+
+        pre_override_label = fused_label
         class_probabilities, confidence_note = self._apply_spoiled_override(
             class_probabilities=class_probabilities,
             normalized_sensor_values=normalized_sensor_values,
@@ -319,6 +341,10 @@ class HybridFreshnessPredictor:
         )
         predicted_label = max(class_probabilities, key=class_probabilities.get)
         confidence = float(class_probabilities[predicted_label]) if class_probabilities else None
+
+        if predicted_label != pre_override_label:
+            LOGGER.info("Override applied | %s -> %s | %s", pre_override_label, predicted_label, confidence_note)
+        LOGGER.info("--- PREDICTION FINAL | %s (%.4f) ---", predicted_label, confidence or 0.0)
 
         return LivePredictionResult(
             timestamp_utc=datetime.now(timezone.utc).isoformat(),

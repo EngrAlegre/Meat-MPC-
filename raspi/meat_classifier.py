@@ -58,6 +58,12 @@ class MeatClassifierService:
         is_valid_meat = predicted_class in config.MEAT_CLASSIFIER_VALID_LABELS
         hybrid_meat_type = config.MEAT_CLASSIFIER_TO_HYBRID_MEAT_TYPE.get(predicted_class)
 
+        prob_str = " | ".join(f"{label}={score:.4f}" for label, score in class_probabilities.items())
+        LOGGER.info(
+            "Meat classification | predicted=%s (%.4f) valid_meat=%s | %s",
+            predicted_class, confidence, is_valid_meat, prob_str,
+        )
+
         return MeatClassificationResult(
             predicted_class=predicted_class,
             confidence=confidence,
