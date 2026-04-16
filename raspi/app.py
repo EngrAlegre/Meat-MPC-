@@ -140,7 +140,7 @@ class HybridFreshnessGUI:
         self.model_preload_started = False
         self.model_preload_complete = False
         self.reference_capture_in_progress = False
-        self.camera_display_size = (900, 500) if not self.compact_layout else (720, 405)
+        self.camera_display_size = (900, 560) if not self.compact_layout else (800, 500)
 
         self._configure_styles()
         self._build_layout()
