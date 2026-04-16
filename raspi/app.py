@@ -539,7 +539,8 @@ class HybridFreshnessGUI:
                 self.worker_queue.put(lambda: on_success(result))
             except Exception as exc:
                 LOGGER.exception("%s failed", task_name)
-                self.worker_queue.put(lambda: self._handle_error(task_name, exc))
+                error = exc
+                self.worker_queue.put(lambda: self._handle_error(task_name, error))
 
         Thread(target=worker, daemon=True).start()
 
@@ -556,7 +557,8 @@ class HybridFreshnessGUI:
                 self.worker_queue.put(self._mark_model_preload_complete)
             except Exception as exc:
                 LOGGER.exception("Background model preload failed")
-                self.worker_queue.put(lambda: self._append_log(f"Background model preload failed: {exc}"))
+                error = exc
+                self.worker_queue.put(lambda: self._append_log(f"Background model preload failed: {error}"))
 
         Thread(target=worker, daemon=True).start()
 
