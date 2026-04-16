@@ -1,156 +1,101 @@
-# FreshTo Raspberry Pi Runtime
+# FreshTo
 
-This folder contains the native Raspberry Pi 5 deployment app for `FreshTo`.
+A Raspberry Pi 5-based system that detects meat type and predicts freshness using gas sensors, a camera, and machine learning.
 
-## Current Architecture
+## What It Does
 
-The app keeps the approved **Option B** pipeline:
+1. A camera watches a sealed chamber continuously.
+2. When meat is placed inside, the system automatically detects it.
+3. An image classifier identifies whether it's **chicken**, **pork**, or **beef** (rejects non-meat objects).
+4. Gas sensors (MQ-137, MQ-136, MQ-135) read ammonia, hydrogen sulfide, and VOC levels.
+5. A hybrid ML model fuses the image and sensor data to predict freshness: **Fresh**, **Neutral**, or **Spoiled**.
+6. Results are shown on a fullscreen Tkinter GUI on the Pi's display.
+7. When the meat is removed, the system resets and waits for the next sample.
 
-1. camera image
-2. meat classifier
-   - `not_meat`
-   - `chicken`
-   - `pork`
-   - `beef`
-3. if `not_meat`
-   - reject
-   - do not run freshness prediction
-4. if `chicken`, `pork`, or `beef`
-   - pass detected meat type into the existing hybrid freshness model
-   - use live MQ sensor ratios and image features
-5. output freshness
-   - `Fresh`
-   - `Neutral`
-   - `Spoiled`
+No manual interaction is needed — everything runs automatically after startup.
 
-The existing hybrid freshness model, MQ math, deployment alignment, and feature order are kept unchanged.
+## Hardware
 
-## Fully Automatic Flow
+| Component | Purpose |
+|---|---|
+| Raspberry Pi 5 | Main controller and inference device |
+| Camera Module v2 (IMX219) | Captures meat images |
+| ADS1115 (I2C ADC) | Reads analog gas sensor outputs |
+| MQ-137 | Ammonia (NH3) detection |
+| MQ-136 | Hydrogen Sulfide (H2S) detection |
+| MQ-135 | VOC detection |
+| DHT22 | Ambient temperature and humidity |
+| 3x Push buttons | Scroll up, scroll down, capture empty reference |
 
-The Raspberry Pi app is now fully automatic.
+A full wiring guide with pin mappings is in `docs/Raspberry_Pi_5_Hybrid_Meat_Freshness_Wiring_Guide.pdf`.
 
-Flow:
+## Project Structure
 
-1. wait for sensor warm-up
-2. capture a fresh empty chamber reference image at startup
-3. monitor the chamber continuously using low-rate preview frames
-4. compare each preview frame against the empty chamber reference
-5. if a new object appears, run a short stability check
-6. after the object stays stable long enough:
-   - capture the analysis image
-   - run the meat classifier
-7. if the classifier says `not_meat`
-   - show `No valid meat detected`
-   - wait for object removal
-8. if the classifier says `chicken`, `pork`, or `beef`
-   - stabilize sensors
-   - run the existing hybrid freshness model
-   - show detected meat type and freshness result
-9. keep the result on screen while the object stays inside
-10. when the object is removed and the chamber becomes close to the empty reference again, reset automatically to idle monitoring
+```
+raspi/
+├── app.py                  # Main GUI app and state machine
+├── config.py               # All settings and paths
+├── meat_classifier.py      # Meat type classifier (MobileNetV2)
+├── predict_live.py         # Hybrid freshness predictor
+├── sensor_reader.py        # ADS1115 + MQ + DHT22 sensor reading
+├── camera_capture.py       # Picamera2 capture and preview
+├── chamber_detector.py     # Object detection via frame differencing
+├── button_input.py         # Physical button handler (GPIO)
+├── feature_extractor.py    # Image feature extraction for ML
+├── requirements.txt        # Python dependencies
+├── captures/               # Saved images (empty reference, scans)
+├── logs/                   # Runtime and prediction logs
+├── docs/                   # Wiring guide PDF
+└── templates/ + static/    # Legacy web UI assets
+```
 
-## State Machine
+## How It Works
 
-The automatic runtime uses clear states:
+The system runs a state machine:
 
-- `INITIALIZING`
-- `WARMING_UP`
-- `WAITING_FOR_OBJECT`
-- `OBJECT_DETECTED`
-- `STABILITY_CHECK`
-- `CLASSIFYING_MEAT`
-- `STABILIZING_SENSORS`
-- `PREDICTING_FRESHNESS`
-- `SHOWING_RESULT`
-- `WAITING_FOR_REMOVAL`
-- `RESETTING`
+```
+INITIALIZING → WARMING_UP → WAITING_FOR_OBJECT → OBJECT_DETECTED
+→ STABILITY_CHECK → CLASSIFYING_MEAT → STABILIZING_SENSORS
+→ PREDICTING_FRESHNESS → SHOWING_RESULT → WAITING_FOR_REMOVAL → (reset)
+```
 
-State changes are logged in the debug log panel and in `logs/raspi_app.log`.
+- **Object detection**: Compares live camera frames against an empty chamber reference image.
+- **Stability check**: Waits for the frame to stop changing (no hand/movement) before analyzing.
+- **Meat classification**: MobileNetV2-based image classifier trained on chicken, pork, beef, and not_meat.
+- **Freshness prediction**: Hybrid model that combines image features with sensor Rs/Ro ratios, weighted 65% image / 35% sensor.
+- **Automatic reset**: When the object is removed and the chamber looks empty again, the system returns to idle.
 
-## Empty Chamber Reference
+## Setup
 
-The chamber monitor compares preview frames against:
+### Prerequisites
 
-- `captures/empty_chamber_reference.jpg`
+- Raspberry Pi 5 with Raspberry Pi OS (Bookworm or later)
+- Camera Module v2 connected via ribbon cable
+- ADS1115, MQ sensors, and DHT22 wired as described in the wiring guide
+- I2C enabled on the Pi
 
-The app now captures a fresh empty chamber reference at startup after warm-up and overwrites the saved reference image. That fresh baseline is then used for object detection during the current runtime session.
-
-Important:
-
-- start the system with an empty chamber whenever possible
-- the app will capture that empty view first and save it as the new baseline
-- that fresh baseline is what later object detection is compared against
-
-## Physical Buttons
-
-The app no longer uses physical buttons to trigger scans.
-
-Current button behavior:
-
-- GPIO17 = scroll up
-- GPIO27 = scroll down
-- GPIO22 = reserved / unused
-
-The analysis cycle is now started automatically by camera-based chamber detection.
-
-## Main Files
-
-- `app.py`
-  - main automatic GUI
-  - state machine
-  - chamber monitoring
-  - result display
-- `chamber_detector.py`
-  - lightweight empty-chamber difference logic
-  - frame preparation and difference scoring
-- `meat_classifier.py`
-  - loads the new image classifier
-  - returns detected meat type and confidence
-- `predict_live.py`
-  - existing freshness predictor
-  - unchanged final classifier for `Fresh / Neutral / Spoiled`
-- `sensor_reader.py`
-  - ADS1115 + MQ + DHT22 reading
-- `camera_capture.py`
-  - Raspberry Pi camera capture and preview
-- `button_input.py`
-  - physical scroll button support
-- `config.py`
-  - runtime paths and automation settings
-
-## Important Config Settings
-
-These settings can be edited in `config.py`:
-
-- `EMPTY_CHAMBER_REFERENCE_IMAGE_PATH`
-- `ALWAYS_CAPTURE_EMPTY_REFERENCE_ON_STARTUP`
-- `OBJECT_DETECTION_THRESHOLD`
-- `OBJECT_STABILITY_DURATION_SECONDS`
-- `OBJECT_STABLE_FRAME_DIFF_THRESHOLD`
-- `OBJECT_MONITOR_INTERVAL_SECONDS`
-- `REMOVAL_DETECTION_THRESHOLD`
-- `REMOVAL_STABILITY_SECONDS`
-- `RESULT_HOLD_MIN_SECONDS`
-- `AUTO_RESET_COOLDOWN_SECONDS`
-- `AUTO_SENSOR_STABILIZATION_READ_COUNT`
-- `SCROLL_UP_GPIO_PIN`
-- `SCROLL_DOWN_GPIO_PIN`
-
-## Install Dependencies
-
-On Raspberry Pi:
+### Enable I2C
 
 ```bash
-cd ~/Documents/Meat/raspi
+sudo raspi-config
+# Interface Options → I2C → Enable
+sudo reboot
+sudo i2cdetect -y 1
+# Should show address 0x48
+```
+
+### Install Dependencies
+
+```bash
+cd raspi
 python3 -m venv .venv
 source .venv/bin/activate
-python3 -m pip install -r requirements.txt
+pip install -r requirements.txt
 ```
 
 If Tkinter is missing:
 
 ```bash
-sudo apt update
 sudo apt install -y python3-tk
 ```
 
@@ -160,38 +105,51 @@ If Picamera2 is missing:
 sudo apt install -y python3-picamera2
 ```
 
-## Enable I2C
+### Camera Config
 
-```bash
-sudo raspi-config
+Make sure `/boot/firmware/config.txt` has the correct overlay for your camera:
+
+```ini
+# For Camera Module v2 (IMX219)
+dtoverlay=imx219
+camera_auto_detect=0
 ```
 
-Then:
+Reboot after changing camera config.
 
-- `Interface Options -> I2C -> Enable`
-
-After that:
+## Run
 
 ```bash
-sudo reboot
-sudo i2cdetect -y 1
-```
-
-You should usually see `48`.
-
-## Run The App
-
-```bash
-cd ~/Documents/Meat/raspi
+cd raspi
 source .venv/bin/activate
 python3 app.py
 ```
 
-## Notes
+The app launches fullscreen on the Pi's display. Start with an empty chamber — the system captures an empty reference frame on startup, then begins monitoring.
 
-- the UI is native Raspberry Pi GUI, not a website
-- the system is now camera-triggered and fully automatic
-- the meat classifier still acts as the first gate before freshness prediction
-- the existing hybrid freshness model is still the final freshness classifier
-- deployment sensor alignment is still active
-- the freshness model feature order was not changed
+## Key Settings
+
+All configurable in `config.py`:
+
+| Setting | Default | Description |
+|---|---|---|
+| `MODEL_MODE` | `"hybrid"` | `hybrid`, `image_only`, or `sensor_only` |
+| `OBJECT_STABILITY_DURATION_SECONDS` | `3.0` | How long the object must stay still before scanning |
+| `OBJECT_DETECTION_THRESHOLD` | `0.025` | Frame difference needed to detect an object |
+| `SENSOR_WARMUP_SECONDS` | `30` | Gas sensor warm-up time before first scan |
+| `MEAT_CLASSIFIER_MIN_CONFIDENCE` | `0.40` | Minimum confidence to accept a meat classification |
+| `HYBRID_IMAGE_WEIGHT` | `0.65` | Image model weight in hybrid fusion |
+| `HYBRID_SENSOR_WEIGHT` | `0.35` | Sensor model weight in hybrid fusion |
+
+## Models
+
+Models are stored in the `model/` directory (one level up from `raspi/`):
+
+- **Meat classifier** (`model/meat_classifier/`): MobileNetV2 fine-tuned on chicken, pork, beef, and not_meat images.
+- **Freshness model** (`model/`): SVM RBF trained on hybrid image + sensor features, with separate models per modality.
+
+Training scripts are in `hybrid_ml/`.
+
+## License
+
+This project was built as a college capstone/thesis project.
