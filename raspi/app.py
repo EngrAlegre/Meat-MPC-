@@ -1026,11 +1026,8 @@ class HybridFreshnessGUI:
     def _update_prediction_display(self, prediction: dict[str, Any]) -> None:
         self.latest_prediction = prediction
         self.prediction_text.set(prediction["predicted_freshness"])
-        if prediction["confidence"] is None:
-            self.confidence_text.set("Confidence: Not available")
-        else:
-            self.confidence_text.set(f"Confidence: {prediction['confidence']:.4f}")
-        self.confidence_note_text.set(prediction["confidence_note"])
+        self.confidence_text.set("")
+        self.confidence_note_text.set("")
 
         class_scores = prediction.get("class_probabilities") or {}
         if class_scores:
@@ -1059,8 +1056,8 @@ class HybridFreshnessGUI:
     def _clear_prediction_display(self, note: str = "Scanning in progress.") -> None:
         self.latest_prediction = None
         self.prediction_text.set("--")
-        self.confidence_text.set("Confidence: --")
-        self.confidence_note_text.set(note)
+        self.confidence_text.set("")
+        self.confidence_note_text.set("")
         self.class_scores_label.configure(text="Waiting for a new prediction...")
 
     def start_scan(self, trigger_source: str | None = None) -> None:
