@@ -140,7 +140,7 @@ class HybridFreshnessGUI:
         self.model_preload_started = False
         self.model_preload_complete = False
         self.reference_capture_in_progress = False
-        self.camera_display_size = (900, 560) if not self.compact_layout else (800, 500)
+        self.camera_display_size = (960, 540) if not self.compact_layout else (720, 405)
 
         self._configure_styles()
         self._build_layout()
@@ -214,11 +214,8 @@ class HybridFreshnessGUI:
         )
         self.content_canvas.bind("<Configure>", self._on_canvas_configure)
 
-        self.content.columnconfigure(0, weight=3)
-        self.content.columnconfigure(1, weight=2)
-        self.content.rowconfigure(0, weight=3)
-        self.content.rowconfigure(1, weight=2)
-        self.content.rowconfigure(2, weight=1)
+        self.content.columnconfigure(0, weight=1)
+        self.content.columnconfigure(1, weight=1)
 
         self._build_preview_panel(self.content)
         self._build_result_panel(self.content)
@@ -227,7 +224,7 @@ class HybridFreshnessGUI:
 
     def _build_sensors_panel(self, parent: tk.Widget) -> None:
         panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
-        panel.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(0, 12))
+        panel.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         panel.columnconfigure(0, weight=1)
 
         ttk.Label(panel, text="Live Sensor and Environment Data", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
@@ -301,19 +298,15 @@ class HybridFreshnessGUI:
         ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
     def _build_preview_panel(self, parent: tk.Widget) -> None:
-        panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
-        panel.grid(row=0, column=0, sticky="nsew", padx=(0, 12), pady=(0, 12))
+        panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=12)
+        panel.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         panel.columnconfigure(0, weight=1)
-        panel.rowconfigure(1, weight=1)
 
         ttk.Label(panel, text="Live Camera Feed", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
 
         image_frame = tk.Frame(panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1)
-        image_frame.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
+        image_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         image_frame.columnconfigure(0, weight=1)
-        image_frame.rowconfigure(0, weight=1)
-        image_frame.grid_propagate(False)
-        image_frame.configure(width=self.camera_display_size[0], height=self.camera_display_size[1])
 
         self.image_label = tk.Label(
             image_frame,
@@ -321,33 +314,49 @@ class HybridFreshnessGUI:
             bg=self.PANEL_ALT,
             fg=self.MUTED,
             font=("Segoe UI", 12),
+            anchor="center",
         )
-        self.image_label.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        self.image_label.pack(pady=8)
 
     def _build_result_panel(self, parent: tk.Widget) -> None:
-        panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
-        panel.grid(row=0, column=1, sticky="nsew", pady=(0, 12))
-        panel.columnconfigure(0, weight=1)
-
-        ttk.Label(panel, text="Prediction Result", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(
-            panel,
-            text="Use the third physical button to capture the empty chamber reference. After that, the system watches the chamber automatically.",
-            style="Body.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(4, 12))
+        detection_panel = tk.Frame(parent, bg=self.CARD, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
+        detection_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 6), pady=(0, 12))
+        tk.Label(detection_panel, text="Detected Meat Type", bg=self.CARD, fg=self.MUTED, font=("Segoe UI", 11)).pack(anchor="center")
+        tk.Label(detection_panel, textvariable=self.detected_meat_text, bg=self.CARD, fg=self.TEXT, font=("Segoe UI", 26, "bold")).pack(anchor="center", pady=(8, 4))
+        tk.Label(detection_panel, textvariable=self.detected_meat_confidence_text, bg=self.CARD, fg=self.INFO, font=("Segoe UI", 12, "bold")).pack(anchor="center")
         tk.Label(
-            panel,
-            textvariable=self.model_mode_text,
-            bg=self.PANEL,
-            fg=self.INFO,
-            anchor="w",
-            font=("Segoe UI", 10, "bold"),
-        ).grid(row=2, column=0, sticky="w", pady=(0, 12))
+            detection_panel,
+            textvariable=self.detected_meat_note_text,
+            bg=self.CARD,
+            fg=self.MUTED,
+            wraplength=400,
+            justify="center",
+            font=("Segoe UI", 10),
+        ).pack(anchor="center", pady=(8, 0))
 
-        trigger_frame = tk.Frame(panel, bg=self.PANEL)
-        trigger_frame.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+        prediction_panel = tk.Frame(parent, bg=self.CARD, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
+        prediction_panel.grid(row=1, column=1, sticky="nsew", padx=(6, 0), pady=(0, 12))
+        tk.Label(prediction_panel, text="Predicted Freshness", bg=self.CARD, fg=self.MUTED, font=("Segoe UI", 11)).pack(anchor="center")
+        tk.Label(prediction_panel, textvariable=self.prediction_text, bg=self.CARD, fg=self.TEXT, font=("Segoe UI", 30, "bold")).pack(anchor="center", pady=(8, 4))
+        tk.Label(prediction_panel, textvariable=self.confidence_text, bg=self.CARD, fg=self.SUCCESS, font=("Segoe UI", 12, "bold")).pack(anchor="center")
+        tk.Label(
+            prediction_panel,
+            textvariable=self.confidence_note_text,
+            bg=self.CARD,
+            fg=self.MUTED,
+            wraplength=400,
+            justify="center",
+            font=("Segoe UI", 10),
+        ).pack(anchor="center", pady=(8, 0))
+
+        extras_panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
+        extras_panel.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        extras_panel.columnconfigure(0, weight=1)
+        extras_panel.columnconfigure(1, weight=1)
+
+        trigger_frame = tk.Frame(extras_panel, bg=self.PANEL)
+        trigger_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         ttk.Label(trigger_frame, text="Physical Buttons", style="Body.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
-
         trigger_row = tk.Frame(trigger_frame, bg=self.PANEL)
         trigger_row.grid(row=1, column=0, sticky="ew")
         trigger_labels = ("Scroll Up", "Scroll Down", "Capture Empty Ref")
@@ -364,38 +373,8 @@ class HybridFreshnessGUI:
             badge.grid(row=0, column=idx, padx=(0 if idx == 0 else 8, 0), sticky="ew")
             trigger_row.columnconfigure(idx, weight=1)
 
-        detection_panel = tk.Frame(panel, bg=self.CARD, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
-        detection_panel.grid(row=4, column=0, sticky="ew")
-        tk.Label(detection_panel, text="Detected Meat Type", bg=self.CARD, fg=self.MUTED, font=("Segoe UI", 11)).pack(anchor="center")
-        tk.Label(detection_panel, textvariable=self.detected_meat_text, bg=self.CARD, fg=self.TEXT, font=("Segoe UI", 26, "bold")).pack(anchor="center", pady=(8, 4))
-        tk.Label(detection_panel, textvariable=self.detected_meat_confidence_text, bg=self.CARD, fg=self.INFO, font=("Segoe UI", 12, "bold")).pack(anchor="center")
-        tk.Label(
-            detection_panel,
-            textvariable=self.detected_meat_note_text,
-            bg=self.CARD,
-            fg=self.MUTED,
-            wraplength=320,
-            justify="center",
-            font=("Segoe UI", 10),
-        ).pack(anchor="center", pady=(8, 0))
-
-        prediction_panel = tk.Frame(panel, bg=self.CARD, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
-        prediction_panel.grid(row=5, column=0, sticky="ew", pady=(12, 0))
-        tk.Label(prediction_panel, text="Predicted Freshness", bg=self.CARD, fg=self.MUTED, font=("Segoe UI", 11)).pack(anchor="center")
-        tk.Label(prediction_panel, textvariable=self.prediction_text, bg=self.CARD, fg=self.TEXT, font=("Segoe UI", 30, "bold")).pack(anchor="center", pady=(8, 4))
-        tk.Label(prediction_panel, textvariable=self.confidence_text, bg=self.CARD, fg=self.SUCCESS, font=("Segoe UI", 12, "bold")).pack(anchor="center")
-        tk.Label(
-            prediction_panel,
-            textvariable=self.confidence_note_text,
-            bg=self.CARD,
-            fg=self.MUTED,
-            wraplength=320,
-            justify="center",
-            font=("Segoe UI", 10),
-        ).pack(anchor="center", pady=(8, 0))
-
-        scores_panel = tk.Frame(panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
-        scores_panel.grid(row=6, column=0, sticky="ew", pady=(12, 12))
+        scores_panel = tk.Frame(extras_panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
+        scores_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 6), pady=(0, 8))
         ttk.Label(scores_panel, text="Class Scores", style="PanelTitle.TLabel").pack(anchor="w")
         self.class_scores_label = tk.Label(
             scores_panel,
@@ -408,22 +387,32 @@ class HybridFreshnessGUI:
         )
         self.class_scores_label.pack(fill="x", pady=(8, 0))
 
-        message_panel = tk.Frame(panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
-        message_panel.grid(row=7, column=0, sticky="ew", pady=(0, 12))
+        message_panel = tk.Frame(extras_panel, bg=self.PANEL_ALT, highlightbackground=self.BORDER, highlightthickness=1, padx=14, pady=14)
+        message_panel.grid(row=1, column=1, sticky="nsew", padx=(6, 0), pady=(0, 8))
+        ttk.Label(message_panel, text="Status", style="PanelTitle.TLabel").pack(anchor="w")
         self.message_label = tk.Label(
             message_panel,
             textvariable=self.message_text,
             bg=self.PANEL_ALT,
             fg=self.MUTED,
             justify="left",
-            wraplength=320,
+            wraplength=400,
             anchor="w",
             font=("Segoe UI", 10),
         )
-        self.message_label.pack(fill="x")
+        self.message_label.pack(fill="x", pady=(8, 0))
+
+        tk.Label(
+            extras_panel,
+            textvariable=self.model_mode_text,
+            bg=self.PANEL,
+            fg=self.INFO,
+            anchor="w",
+            font=("Segoe UI", 10, "bold"),
+        ).grid(row=2, column=0, columnspan=2, sticky="w")
 
         exit_button = tk.Button(
-            panel,
+            extras_panel,
             text="Exit App",
             command=self.root.destroy,
             bg="#8a3243",
@@ -435,11 +424,11 @@ class HybridFreshnessGUI:
             pady=12,
             font=("Segoe UI", 12, "bold"),
         )
-        exit_button.grid(row=8, column=0, sticky="ew")
+        exit_button.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
 
     def _build_log_panel(self, parent: tk.Widget) -> None:
         panel = tk.Frame(parent, bg=self.PANEL, highlightbackground=self.BORDER, highlightthickness=1, padx=18, pady=18)
-        panel.grid(row=2, column=0, columnspan=2, sticky="nsew")
+        panel.grid(row=4, column=0, columnspan=2, sticky="ew")
         panel.columnconfigure(0, weight=1)
         panel.rowconfigure(1, weight=1)
 
@@ -852,11 +841,10 @@ class HybridFreshnessGUI:
             resample = Image.Resampling.LANCZOS
         except AttributeError:  # pragma: no cover - Pillow compatibility
             resample = Image.LANCZOS
-        return ImageOps.fit(
+        return ImageOps.contain(
             image.convert("RGB"),
             (target_width, target_height),
             method=resample,
-            centering=(0.5, 0.5),
         )
 
     def _handle_automation_preview(self, preview_image: Image.Image) -> None:
@@ -1053,13 +1041,13 @@ class HybridFreshnessGUI:
 
     def _update_meat_detection_display(self, result: MeatClassificationResult) -> None:
         self.latest_meat_detection = result
-        if result.predicted_class == config.MEAT_CLASSIFIER_NOT_MEAT_LABEL:
+        if not result.is_valid_meat:
             self.detected_meat_text.set("No valid meat")
-            self.detected_meat_note_text.set("Freshness prediction was skipped because no valid meat was detected.")
+            self.detected_meat_note_text.set("")
         else:
             detected_name = result.hybrid_meat_type or result.predicted_class.replace("_", " ").title()
             self.detected_meat_text.set(detected_name)
-            self.detected_meat_note_text.set("Detected via image classification. Proceeding to freshness prediction.")
+            self.detected_meat_note_text.set("")
         self.detected_meat_confidence_text.set(f"Confidence: {result.confidence:.4f}")
 
     def _clear_meat_detection_display(self, note: str = "Waiting for a new scan.") -> None:
@@ -1235,7 +1223,7 @@ class HybridFreshnessGUI:
                     log_message="Object rejected by the meat classifier. Waiting for removal.",
                 )
                 self._set_message(
-                    "Scan stopped because the captured image was classified as not_meat. No valid meat detected.",
+                    "Scan stopped because no valid meat was detected in the captured image.",
                     self.WARNING,
                 )
                 return

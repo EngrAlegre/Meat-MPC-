@@ -55,6 +55,7 @@ MEAT_CLASSIFIER_CLASS_NAMES_PATH = MEAT_CLASSIFIER_DIR / "class_names.json"
 MEAT_CLASSIFIER_METADATA_PATH = MEAT_CLASSIFIER_DIR / "metadata.json"
 MEAT_CLASSIFIER_NOT_MEAT_LABEL = "not_meat"
 MEAT_CLASSIFIER_VALID_LABELS = ("chicken", "pork", "beef")
+MEAT_CLASSIFIER_MIN_CONFIDENCE = 0.40
 MEAT_CLASSIFIER_TO_HYBRID_MEAT_TYPE = {
     "chicken": "Chicken",
     "pork": "Pork",
@@ -122,7 +123,7 @@ DHT22_REFRESH_SECONDS = 3.0
 # stay on the same feature scale as the training-time collection setup.
 # This is not thresholding or rule-based classification; the ML model remains
 # the final decision-maker.
-RUNTIME_RATIO_ADJUSTMENT_ENABLED = False
+RUNTIME_RATIO_ADJUSTMENT_ENABLED = True
 RUNTIME_RATIO_SCALE = {
     "nh3_ratio": 0.7071,
     "h2s_ratio": 0.3769,

@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+from PIL import Image
+
 import config
 
 
@@ -13,7 +16,7 @@ HYBRID_ML_DIR = Path(__file__).resolve().parents[1] / "hybrid_ml"
 if str(HYBRID_ML_DIR) not in sys.path:
     sys.path.insert(0, str(HYBRID_ML_DIR))
 
-from meat_classifier_utils import MeatClassifierRuntimeError, load_meat_classifier, predict_meat_class
+from meat_classifier_utils import MeatClassifierRuntimeError, load_meat_classifier
 
 
 LOGGER = logging.getLogger(__name__)
@@ -46,8 +49,20 @@ class MeatClassifierService:
 
     def classify(self, image_path: str | Path) -> MeatClassificationResult:
         try:
-            result = predict_meat_class(self.artifacts, image_path)
-        except MeatClassifierRuntimeError as exc:
+            input_size = tuple(self.artifacts.metadata.get("input_size", (224, 224)))
+            img = Image.open(image_path).convert("RGB").resize((input_size[0], input_size[1]))
+            array = np.expand_dims(np.asarray(img, dtype=np.float32), axis=0)
+            probabilities = self.artifacts.model.predict(array, verbose=0)[0]
+            predicted_index = int(np.argmax(probabilities))
+            result = {
+                "predicted_class": self.artifacts.class_names[predicted_index],
+                "confidence": float(probabilities[predicted_index]),
+                "class_probabilities": {
+                    name: float(score)
+                    for name, score in zip(self.artifacts.class_names, probabilities)
+                },
+            }
+        except Exception as exc:
             raise MeatClassifierLoadError(str(exc)) from exc
 
         predicted_class = str(result["predicted_class"])
@@ -55,7 +70,11 @@ class MeatClassifierService:
         class_probabilities = {
             str(label): float(score) for label, score in result["class_probabilities"].items()
         }
-        is_valid_meat = predicted_class in config.MEAT_CLASSIFIER_VALID_LABELS
+        min_confidence = getattr(config, "MEAT_CLASSIFIER_MIN_CONFIDENCE", 0.60)
+        is_valid_meat = (
+            predicted_class in config.MEAT_CLASSIFIER_VALID_LABELS
+            and confidence >= min_confidence
+        )
         hybrid_meat_type = config.MEAT_CLASSIFIER_TO_HYBRID_MEAT_TYPE.get(predicted_class)
 
         prob_str = " | ".join(f"{label}={score:.4f}" for label, score in class_probabilities.items())
