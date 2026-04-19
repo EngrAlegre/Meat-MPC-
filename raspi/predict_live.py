@@ -253,23 +253,162 @@ class HybridFreshnessPredictor:
         class_probabilities: dict[str, float],
         normalized_sensor_values: dict[str, float],
         confidence_note: str,
-    ) -> tuple[dict[str, float], str]:
+    ) -> tuple[dict[str, float], str, bool]:
         if not getattr(config, "SPOILED_OVERRIDE_ENABLED", False):
-            return class_probabilities, confidence_note
+            return class_probabilities, confidence_note, False
 
-        threshold = float(getattr(config, "SPOILED_OVERRIDE_RATIO_THRESHOLD", 0.30))
+        legacy_threshold = float(getattr(config, "SPOILED_OVERRIDE_RATIO_THRESHOLD", 0.30))
+        nh3_max = float(getattr(config, "SPOILED_OVERRIDE_NH3_MAX", legacy_threshold))
+        h2s_max = float(getattr(config, "SPOILED_OVERRIDE_H2S_MAX", legacy_threshold))
         nh3_ratio = float(normalized_sensor_values["nh3_ratio"])
         h2s_ratio = float(normalized_sensor_values["h2s_ratio"])
-        if nh3_ratio >= threshold and h2s_ratio >= threshold:
-            return class_probabilities, confidence_note
+        if nh3_ratio > nh3_max and h2s_ratio > h2s_max:
+            return class_probabilities, confidence_note, False
 
         overridden = {label: 0.0 for label in self.target_classes}
         overridden["Spoiled"] = 1.0
         override_note = (
-            f"Spoiled override applied because NH3 or H2S ratio fell below "
-            f"{threshold:.2f} (NH3={nh3_ratio:.2f}, H2S={h2s_ratio:.2f})."
+            f"Spoiled override applied because NH3<= {nh3_max:.2f} (got {nh3_ratio:.2f}) "
+            f"or H2S<= {h2s_max:.2f} (got {h2s_ratio:.2f})."
         )
-        return overridden, override_note
+        return overridden, override_note, True
+
+    def _apply_fresh_override(
+        self,
+        *,
+        class_probabilities: dict[str, float],
+        normalized_sensor_values: dict[str, float],
+        confidence_note: str,
+    ) -> tuple[dict[str, float], str, bool]:
+        if not getattr(config, "FRESH_OVERRIDE_ENABLED", False):
+            return class_probabilities, confidence_note, False
+
+        nh3_min = float(getattr(config, "FRESH_OVERRIDE_NH3_MIN", 0.85))
+        h2s_min = float(getattr(config, "FRESH_OVERRIDE_H2S_MIN", 0.55))
+        nh3_ratio = float(normalized_sensor_values["nh3_ratio"])
+        h2s_ratio = float(normalized_sensor_values["h2s_ratio"])
+        if nh3_ratio < nh3_min or h2s_ratio < h2s_min:
+            return class_probabilities, confidence_note, False
+
+        overridden = {label: 0.0 for label in self.target_classes}
+        overridden["Fresh"] = 1.0
+        override_note = (
+            f"Fresh override applied because NH3>= {nh3_min:.2f} (got {nh3_ratio:.2f}) "
+            f"and H2S>= {h2s_min:.2f} (got {h2s_ratio:.2f})."
+        )
+        return overridden, override_note, True
+
+    def _apply_neutral_override(
+        self,
+        *,
+        class_probabilities: dict[str, float],
+        normalized_sensor_values: dict[str, float],
+        confidence_note: str,
+    ) -> tuple[dict[str, float], str, bool]:
+        if not getattr(config, "NEUTRAL_OVERRIDE_ENABLED", False):
+            return class_probabilities, confidence_note, False
+
+        nh3_min = float(getattr(config, "NEUTRAL_OVERRIDE_NH3_MIN", 0.55))
+        nh3_max = float(getattr(config, "NEUTRAL_OVERRIDE_NH3_MAX", 0.85))
+        h2s_min = float(getattr(config, "NEUTRAL_OVERRIDE_H2S_MIN", 0.35))
+        h2s_max = float(getattr(config, "NEUTRAL_OVERRIDE_H2S_MAX", 0.55))
+        nh3_ratio = float(normalized_sensor_values["nh3_ratio"])
+        h2s_ratio = float(normalized_sensor_values["h2s_ratio"])
+        nh3_in_band = nh3_min <= nh3_ratio <= nh3_max
+        h2s_in_band = h2s_min <= h2s_ratio <= h2s_max
+        if not (nh3_in_band and h2s_in_band):
+            return class_probabilities, confidence_note, False
+
+        overridden = {label: 0.0 for label in self.target_classes}
+        overridden["Neutral"] = 1.0
+        override_note = (
+            f"Neutral override applied because NH3 in [{nh3_min:.2f}, {nh3_max:.2f}] "
+            f"(got {nh3_ratio:.2f}) and H2S in [{h2s_min:.2f}, {h2s_max:.2f}] "
+            f"(got {h2s_ratio:.2f})."
+        )
+        return overridden, override_note, True
+
+    def _apply_baseline_delta_override(
+        self,
+        *,
+        class_probabilities: dict[str, float],
+        normalized_sensor_values: dict[str, float],
+        sensor_baseline: dict[str, Any] | None,
+        confidence_note: str,
+    ) -> tuple[dict[str, float], str, bool]:
+        if not getattr(config, "BASELINE_DELTA_OVERRIDE_ENABLED", False):
+            return class_probabilities, confidence_note, False
+        if not sensor_baseline:
+            return class_probabilities, confidence_note, False
+
+        baseline_nh3 = sensor_baseline.get("nh3_ratio")
+        baseline_h2s = sensor_baseline.get("h2s_ratio")
+        if baseline_nh3 is None or baseline_h2s is None:
+            return class_probabilities, confidence_note, False
+
+        nh3_drop_limit = float(getattr(config, "BASELINE_DELTA_NH3_SPOILED_DROP", 0.08))
+        h2s_drop_limit = float(getattr(config, "BASELINE_DELTA_H2S_SPOILED_DROP", 0.04))
+        nh3_fresh_tol = float(getattr(config, "BASELINE_DELTA_NH3_FRESH_TOLERANCE", 0.06))
+        h2s_fresh_tol = float(getattr(config, "BASELINE_DELTA_H2S_FRESH_TOLERANCE", 0.04))
+
+        nh3_ratio = float(normalized_sensor_values["nh3_ratio"])
+        h2s_ratio = float(normalized_sensor_values["h2s_ratio"])
+        nh3_delta = nh3_ratio - float(baseline_nh3)
+        h2s_delta = h2s_ratio - float(baseline_h2s)
+
+        if nh3_delta <= -nh3_drop_limit or h2s_delta <= -h2s_drop_limit:
+            chosen = "Spoiled"
+            reason = (
+                f"NH3={nh3_ratio:.2f}, H2S={h2s_ratio:.2f} indicate elevated gas activity"
+            )
+        elif abs(nh3_delta) <= nh3_fresh_tol and abs(h2s_delta) <= h2s_fresh_tol:
+            chosen = "Fresh"
+            reason = (
+                f"NH3={nh3_ratio:.2f}, H2S={h2s_ratio:.2f} remained within the safe range"
+            )
+        else:
+            chosen = "Neutral"
+            reason = (
+                f"NH3={nh3_ratio:.2f}, H2S={h2s_ratio:.2f} fell within the borderline range"
+            )
+
+        overridden = {label: 0.0 for label in self.target_classes}
+        if chosen in overridden:
+            overridden[chosen] = 1.0
+        else:
+            overridden[self.target_classes[0]] = 1.0
+        override_note = f"Sensor monitor override -> {chosen} because {reason}."
+        return overridden, override_note, True
+
+    def _apply_presentation_override(
+        self,
+        *,
+        class_probabilities: dict[str, float],
+        meat_type: str,
+        confidence_note: str,
+    ) -> tuple[dict[str, float], str, bool]:
+        if not getattr(config, "DEMO_PRESENTATION_OVERRIDE_ENABLED", False):
+            return class_probabilities, confidence_note, False
+
+        forced = getattr(config, "DEMO_PRESENTATION_FORCED_RESULT", None)
+        per_meat = getattr(config, "DEMO_PRESENTATION_PER_MEAT", {}) or {}
+        chosen: str | None = None
+        if isinstance(forced, str) and forced in self.target_classes:
+            chosen = forced
+            why = "DEMO_PRESENTATION_FORCED_RESULT"
+        else:
+            mapped = per_meat.get(meat_type) or per_meat.get(str(meat_type).title())
+            if isinstance(mapped, str) and mapped in self.target_classes:
+                chosen = mapped
+                why = f"DEMO_PRESENTATION_PER_MEAT[{meat_type}]"
+
+        if chosen is None:
+            return class_probabilities, confidence_note, False
+
+        overridden = {label: 0.0 for label in self.target_classes}
+        overridden[chosen] = 1.0
+        override_note = f"Presentation override -> {chosen} (source: {why})."
+        return overridden, override_note, True
 
     def _apply_low_confidence_neutral_override(
         self,
@@ -301,7 +440,13 @@ class HybridFreshnessPredictor:
             return "N/A"
         return " | ".join(f"{label}={score:.4f}" for label, score in probs.items())
 
-    def predict(self, image_path: str | Path, meat_type: str, sensor_values: dict[str, Any]) -> LivePredictionResult:
+    def predict(
+        self,
+        image_path: str | Path,
+        meat_type: str,
+        sensor_values: dict[str, Any],
+        sensor_baseline: dict[str, Any] | None = None,
+    ) -> LivePredictionResult:
         normalized_sensor_values = self._normalize_sensor_values(sensor_values)
         image_probabilities: dict[str, float] | None = None
         sensor_probabilities: dict[str, float] | None = None
@@ -330,13 +475,45 @@ class HybridFreshnessPredictor:
         LOGGER.info("Fused result  | %s (top: %s=%.4f)", self._fmt_probs(class_probabilities), fused_label, class_probabilities[fused_label])
 
         pre_override_label = fused_label
-        class_probabilities, confidence_note = self._apply_spoiled_override(
+
+        baseline_applied = False
+        class_probabilities, confidence_note, baseline_applied = self._apply_baseline_delta_override(
             class_probabilities=class_probabilities,
             normalized_sensor_values=normalized_sensor_values,
+            sensor_baseline=sensor_baseline,
             confidence_note=confidence_note,
         )
-        class_probabilities, confidence_note = self._apply_low_confidence_neutral_override(
+
+        spoiled_applied = False
+        fresh_applied = False
+        neutral_applied = False
+        if not baseline_applied:
+            class_probabilities, confidence_note, spoiled_applied = self._apply_spoiled_override(
+                class_probabilities=class_probabilities,
+                normalized_sensor_values=normalized_sensor_values,
+                confidence_note=confidence_note,
+            )
+            if not spoiled_applied:
+                class_probabilities, confidence_note, fresh_applied = self._apply_fresh_override(
+                    class_probabilities=class_probabilities,
+                    normalized_sensor_values=normalized_sensor_values,
+                    confidence_note=confidence_note,
+                )
+            if not (spoiled_applied or fresh_applied):
+                class_probabilities, confidence_note, neutral_applied = self._apply_neutral_override(
+                    class_probabilities=class_probabilities,
+                    normalized_sensor_values=normalized_sensor_values,
+                    confidence_note=confidence_note,
+                )
+        if not (baseline_applied or spoiled_applied or fresh_applied or neutral_applied):
+            class_probabilities, confidence_note = self._apply_low_confidence_neutral_override(
+                class_probabilities=class_probabilities,
+                confidence_note=confidence_note,
+            )
+
+        class_probabilities, confidence_note, presentation_applied = self._apply_presentation_override(
             class_probabilities=class_probabilities,
+            meat_type=meat_type,
             confidence_note=confidence_note,
         )
         predicted_label = max(class_probabilities, key=class_probabilities.get)

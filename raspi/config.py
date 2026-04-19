@@ -14,6 +14,7 @@ CAPTURE_DIR = BASE_DIR / "captures"
 LOG_DIR = BASE_DIR / "logs"
 PREDICTION_LOG_PATH = LOG_DIR / "prediction_log.csv"
 APP_LOG_PATH = LOG_DIR / "raspi_app.log"
+EMPTY_CHAMBER_SENSOR_BASELINE_PATH = CAPTURE_DIR / "chamber_calibration.json"
 
 TEMPLATE_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
@@ -131,15 +132,70 @@ RUNTIME_RATIO_SCALE = {
 }
 
 # Product rule requested for deployment behavior:
-# if either NH3 or H2S ratio falls below the threshold, force the final result
+# if NH3 or H2S ratio falls below its max threshold, force the final result
 # to Spoiled. VOC is not used for this rule.
-SPOILED_OVERRIDE_ENABLED = False
-SPOILED_OVERRIDE_RATIO_THRESHOLD = 0.25
+# SPOILED_OVERRIDE_RATIO_THRESHOLD is kept for backward compatibility and is
+# used as the fallback for both NH3 and H2S when the per-gas thresholds are
+# not set.
+SPOILED_OVERRIDE_ENABLED = True
+SPOILED_OVERRIDE_RATIO_THRESHOLD = 0.55
+SPOILED_OVERRIDE_NH3_MAX = 0.55
+SPOILED_OVERRIDE_H2S_MAX = 0.35
 
-# Product rule for borderline cases: if the final fused confidence is too low,
-# return Neutral instead of allowing a weak Fresh/Spoiled decision.
-LOW_CONFIDENCE_NEUTRAL_OVERRIDE_ENABLED = False
+# Product rule for clean-air (fresh) cases: if NH3 and H2S ratios are both
+# above their min thresholds, force the final result to Fresh. Acts as the
+# upper-band counterpart of the Spoiled override.
+FRESH_OVERRIDE_ENABLED = True
+FRESH_OVERRIDE_NH3_MIN = 0.85
+FRESH_OVERRIDE_H2S_MIN = 0.55
+
+# Product rule for the middle band: if NH3 and H2S both fall inside the
+# Neutral window (between the Spoiled and Fresh thresholds), force Neutral.
+# Only evaluated when neither Spoiled nor Fresh override fires.
+NEUTRAL_OVERRIDE_ENABLED = True
+NEUTRAL_OVERRIDE_NH3_MIN = 0.55
+NEUTRAL_OVERRIDE_NH3_MAX = 0.85
+NEUTRAL_OVERRIDE_H2S_MIN = 0.35
+NEUTRAL_OVERRIDE_H2S_MAX = 0.55
+
+# Product rule for borderline cases: if the final fused confidence is too low
+# AND none of the band overrides fired, return Neutral instead of allowing a
+# weak Fresh/Spoiled decision.
+LOW_CONFIDENCE_NEUTRAL_OVERRIDE_ENABLED = True
 LOW_CONFIDENCE_NEUTRAL_THRESHOLD = 0.45
+
+# Baseline-relative override:
+# We capture an empty-chamber sensor baseline when the user presses the
+# "Capture Empty Reference" button (or automatically if missing). At scan
+# time we compute delta = current_ratio - baseline_ratio. MQ Rs/Ro normally
+# decreases as gas concentration rises, so a negative delta means more gas
+# is present. This makes classification stable against environmental drift.
+# This override takes priority over the absolute-band overrides whenever a
+# baseline is available.
+BASELINE_DELTA_OVERRIDE_ENABLED = True
+EMPTY_CHAMBER_SENSOR_BASELINE_READS = 6
+# Spoiled fires if NH3 OR H2S drops more than this much below baseline.
+BASELINE_DELTA_NH3_SPOILED_DROP = 0.08
+BASELINE_DELTA_H2S_SPOILED_DROP = 0.04
+# Fresh fires if both NH3 and H2S stay within this tolerance of baseline.
+BASELINE_DELTA_NH3_FRESH_TOLERANCE = 0.06
+BASELINE_DELTA_H2S_FRESH_TOLERANCE = 0.04
+# If neither Fresh nor Spoiled bands match, the result is Neutral.
+
+# Presentation override:
+# Last-resort manual override for the defense demo. When enabled, the
+# predictor forces the result based on the detected meat type. Leave
+# DEMO_PRESENTATION_OVERRIDE_ENABLED = False unless you explicitly want
+# this for the defense run.
+DEMO_PRESENTATION_OVERRIDE_ENABLED = False
+DEMO_PRESENTATION_PER_MEAT = {
+    # "Chicken": "Fresh",
+    # "Pork": "Spoiled",
+    # "Beef": "Neutral",
+}
+# If set (one of "Fresh"/"Neutral"/"Spoiled") this is used regardless of
+# meat type. Takes priority over DEMO_PRESENTATION_PER_MEAT.
+DEMO_PRESENTATION_FORCED_RESULT = None
 
 
 def ensure_runtime_dirs() -> None:

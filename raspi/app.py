@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import queue
 import tkinter as tk
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, Thread
 import time
@@ -121,6 +122,7 @@ class HybridFreshnessGUI:
             self.empty_reference_frame = None
         elif getattr(config, "AUTO_CAPTURE_EMPTY_REFERENCE_IF_MISSING", True):
             self.empty_reference_frame = load_reference_frame(config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH)
+        self.empty_chamber_sensor_baseline: dict[str, Any] | None = self._load_sensor_baseline()
         self.automation_state = self.STATE_INITIALIZING
         self.object_detected_since: float | None = None
         self.stable_since: float | None = None
@@ -638,7 +640,65 @@ class HybridFreshnessGUI:
         self._append_log(
             f"Empty chamber reference captured from {len(frames)} preview frame(s): {config.EMPTY_CHAMBER_REFERENCE_IMAGE_PATH}"
         )
+
+        self._capture_sensor_baseline_snapshot()
         return True
+
+    def _load_sensor_baseline(self) -> dict[str, Any] | None:
+        path = getattr(config, "EMPTY_CHAMBER_SENSOR_BASELINE_PATH", None)
+        if path is None or not Path(path).exists():
+            return None
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return None
+            for key in ("nh3_ratio", "h2s_ratio", "voc_ratio"):
+                if key not in data:
+                    return None
+            return data
+        except Exception:
+            return None
+
+    def _capture_sensor_baseline_snapshot(self) -> dict[str, Any] | None:
+        read_count = max(int(getattr(config, "EMPTY_CHAMBER_SENSOR_BASELINE_READS", 5)), 1)
+        try:
+            with self.sensor_lock:
+                reader = self._get_sensor_reader()
+                samples = [reader.read_once() for _ in range(read_count)]
+        except Exception:
+            return None
+
+        if not samples:
+            return None
+
+        def _avg(key: str) -> float:
+            values = [float(sample[key]) for sample in samples if key in sample]
+            return float(np.mean(values)) if values else float("nan")
+
+        baseline = {
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "read_count": len(samples),
+            "nh3_ratio": _avg("nh3_ratio"),
+            "h2s_ratio": _avg("h2s_ratio"),
+            "voc_ratio": _avg("voc_ratio"),
+            "nh3_voltage": _avg("nh3_voltage"),
+            "h2s_voltage": _avg("h2s_voltage"),
+            "voc_voltage": _avg("voc_voltage"),
+            "nh3_rs": _avg("nh3_rs"),
+            "h2s_rs": _avg("h2s_rs"),
+            "voc_rs": _avg("voc_rs"),
+        }
+
+        path = getattr(config, "EMPTY_CHAMBER_SENSOR_BASELINE_PATH", None)
+        if path is not None:
+            try:
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+                Path(path).write_text(json.dumps(baseline, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
+        self.empty_chamber_sensor_baseline = baseline
+        return baseline
 
     def capture_empty_reference(self) -> None:
         if self.scan_in_progress or self.reference_capture_in_progress:
@@ -1187,6 +1247,7 @@ class HybridFreshnessGUI:
                 image_path=image_path,
                 meat_type=meat_detection.hybrid_meat_type or "Chicken",
                 sensor_values=sensor_input,
+                sensor_baseline=self.empty_chamber_sensor_baseline,
             )
             predictor.append_prediction_log(result)
 
