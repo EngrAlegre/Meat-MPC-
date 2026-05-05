@@ -1,7 +1,7 @@
 {
-  "modality": "image_only",
+  "head": "image_only",
   "best_model_name": "random_forest",
-  "best_grouped_cv_accuracy": 1.0,
+  "best_cv_accuracy": 0.9965183492404893,
   "feature_columns": [
     "img_rgb_r_mean",
     "img_rgb_r_std",
@@ -48,23 +48,29 @@
   "categorical_columns": [
     "meat_type"
   ],
+  "target_classes": [
+    "Fresh",
+    "Spoiled"
+  ],
   "sensor_base_columns": [
     "nh3_ratio",
     "h2s_ratio"
   ],
-  "target_classes": [
-    "Fresh",
-    "Neutral",
-    "Spoiled"
+  "holdout_summary": [
+    {
+      "head": "image_only",
+      "model_name": "svm_rbf",
+      "holdout_accuracy": 0.9653179190751445,
+      "cv_accuracy_mean": 0.977987632746337,
+      "cv_accuracy_std": 0.01177127922079652
+    },
+    {
+      "head": "image_only",
+      "model_name": "random_forest",
+      "holdout_accuracy": 0.9710982658959537,
+      "cv_accuracy_mean": 0.9965183492404893,
+      "cv_accuracy_std": 0.00464782034877962
+    }
   ],
-  "group_count": 334,
-  "sensor_window_size": 15,
-  "sensor_window_step": 15,
-  "recommended_metric": "grouped_cv_accuracy_mean",
-  "notes": [
-    "Training rows come from the Dataset folder via build_hybrid_dataset().",
-    "One row is created per image, matched with a sensor window summary from the corresponding class CSV.",
-    "Grouped CV keeps each sensor window group entirely in either train or validation folds.",
-    "Use these modality-specific runs to diagnose whether image-side or sensor-side features are causing deployment issues."
-  ]
+  "random_state": 42
 }

@@ -1,4 +1,5 @@
 *Dataset
+.wsl_env/
 
 *raspi/docs
 *raspi/generate_wiring_guide_pdf.py

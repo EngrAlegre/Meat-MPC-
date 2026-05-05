@@ -50,40 +50,62 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--freeze-base-epochs", type=int, default=8, help="Epochs with the MobileNetV2 base frozen.")
     parser.add_argument("--fine-tune-epochs", type=int, default=6, help="Fine-tuning epochs after unfreezing part of the base.")
     parser.add_argument("--fine-tune-layers", type=int, default=40, help="How many MobileNetV2 layers to unfreeze at the end.")
+    parser.add_argument(
+        "--max-per-folder",
+        type=int,
+        default=None,
+        help="Optional cap on the number of images taken from each source folder. Useful when one class has many more samples than another.",
+    )
     return parser.parse_args()
 
 
 def infer_meat_label(folder_name: str) -> str | None:
-    lowered = folder_name.lower()
-    if lowered == "not_meat":
+    normalized = folder_name.strip().lower().replace("-", " ").replace("_", " ")
+    collapsed = " ".join(normalized.split())
+    if collapsed in {"not meat", "non meat", "nonmeat", "notmeat"}:
         return "not_meat"
-    if lowered == "chicken" or lowered.startswith("chicken_"):
+    tokens = set(collapsed.split())
+    if "chicken" in tokens:
         return "chicken"
-    if lowered == "pork" or lowered.startswith("pork_"):
+    if "pork" in tokens:
         return "pork"
-    if lowered == "beef" or lowered.startswith("beef_"):
+    if "beef" in tokens:
         return "beef"
+    if collapsed == "not_meat":
+        return "not_meat"
     return None
 
 
-def build_image_index(dataset_dir: Path) -> pd.DataFrame:
+def build_image_index(
+    dataset_dir: Path,
+    max_per_folder: int | None = None,
+    seed: int = 42,
+) -> pd.DataFrame:
     if not dataset_dir.exists():
         raise FileNotFoundError(f"Dataset directory does not exist: {dataset_dir}")
 
+    rng = random.Random(seed)
     rows: list[dict[str, str]] = []
     for class_dir in sorted(path for path in dataset_dir.iterdir() if path.is_dir()):
         label = infer_meat_label(class_dir.name)
         if label is None:
             continue
-        for image_path in class_dir.rglob("*"):
-            if image_path.is_file() and image_path.suffix.lower() in IMAGE_SUFFIXES:
-                rows.append(
-                    {
-                        "image_path": str(image_path),
-                        "label": label,
-                        "source_folder": class_dir.name,
-                    }
-                )
+        image_paths: list[Path] = [
+            path
+            for path in class_dir.rglob("*")
+            if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+        ]
+        image_paths.sort()
+        if max_per_folder is not None and len(image_paths) > max_per_folder:
+            image_paths = rng.sample(image_paths, max_per_folder)
+        for image_path in image_paths:
+            rows.append(
+                {
+                    "image_path": str(image_path),
+                    "label": label,
+                    "source_folder": class_dir.name,
+                }
+            )
 
     if not rows:
         raise MeatClassifierRuntimeError(
@@ -188,7 +210,11 @@ def main() -> None:
     np.random.seed(args.seed)
     random.seed(args.seed)
 
-    index_frame = build_image_index(args.dataset_dir)
+    index_frame = build_image_index(
+        args.dataset_dir,
+        max_per_folder=args.max_per_folder,
+        seed=args.seed,
+    )
     print_dataset_summary(index_frame)
 
     train_frame, validation_frame = train_test_split(
@@ -324,6 +350,7 @@ def main() -> None:
             "seed": args.seed,
             "dataset_dir": str(args.dataset_dir),
             "dataset_layout": "auto-detected",
+            "max_per_folder": args.max_per_folder,
             "label_counts": index_frame["label"].value_counts().reindex(class_names, fill_value=0).to_dict(),
             "source_folders": sorted(index_frame["source_folder"].unique().tolist()),
             "validation_accuracy": accuracy,

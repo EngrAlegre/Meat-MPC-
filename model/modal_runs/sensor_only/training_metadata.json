@@ -1,7 +1,7 @@
 {
-  "modality": "sensor_only",
+  "head": "sensor_only",
   "best_model_name": "svm_rbf",
-  "best_grouped_cv_accuracy": 1.0,
+  "best_cv_accuracy": 0.999,
   "feature_columns": [
     "sensor_nh3_ratio_mean",
     "sensor_nh3_ratio_min",
@@ -26,23 +26,30 @@
   "categorical_columns": [
     "meat_type"
   ],
-  "sensor_base_columns": [
-    "nh3_ratio",
-    "h2s_ratio"
-  ],
   "target_classes": [
     "Fresh",
     "Neutral",
     "Spoiled"
   ],
-  "group_count": 334,
-  "sensor_window_size": 15,
-  "sensor_window_step": 15,
-  "recommended_metric": "grouped_cv_accuracy_mean",
-  "notes": [
-    "Training rows come from the Dataset folder via build_hybrid_dataset().",
-    "One row is created per image, matched with a sensor window summary from the corresponding class CSV.",
-    "Grouped CV keeps each sensor window group entirely in either train or validation folds.",
-    "Use these modality-specific runs to diagnose whether image-side or sensor-side features are causing deployment issues."
-  ]
+  "sensor_base_columns": [
+    "nh3_ratio",
+    "h2s_ratio"
+  ],
+  "holdout_summary": [
+    {
+      "head": "sensor_only",
+      "model_name": "svm_rbf",
+      "holdout_accuracy": 0.9950248756218906,
+      "cv_accuracy_mean": 0.999,
+      "cv_accuracy_std": 0.0020000000000000018
+    },
+    {
+      "head": "sensor_only",
+      "model_name": "random_forest",
+      "holdout_accuracy": 0.9950248756218906,
+      "cv_accuracy_mean": 0.9940149253731343,
+      "cv_accuracy_std": 0.0037323912292935827
+    }
+  ],
+  "random_state": 42
 }

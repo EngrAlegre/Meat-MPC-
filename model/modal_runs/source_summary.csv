@@ -1,0 +1,2 @@
+image_rows,sensor_rows,image_classes,sensor_classes
+862,1003,"['Fresh', 'Spoiled']","['Fresh', 'Neutral', 'Spoiled']"

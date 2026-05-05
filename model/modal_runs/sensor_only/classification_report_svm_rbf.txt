@@ -1,0 +1,9 @@
+              precision    recall  f1-score   support
+
+       Fresh     0.9905    1.0000    0.9952       104
+     Neutral     1.0000    0.9565    0.9778        23
+     Spoiled     1.0000    1.0000    1.0000        74
+
+    accuracy                         0.9950       201
+   macro avg     0.9968    0.9855    0.9910       201
+weighted avg     0.9951    0.9950    0.9950       201

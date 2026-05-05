@@ -56,42 +56,88 @@ class HybridFreshnessPredictor:
         self.image_label_encoder = None
         self.image_preprocessor = None
         self.image_feature_columns: list[str] = []
+        self.image_target_classes: list[str] = []
         self.image_metadata: dict[str, Any] = {}
 
+        self.sensor_model = None
+        self.sensor_label_encoder = None
+        self.sensor_preprocessor = None
+        self.sensor_feature_columns: list[str] = []
+        self.sensor_categorical_columns: list[str] = []
+        self.sensor_target_classes: list[str] = []
         self.sensor_metadata: dict[str, Any] = {}
         self.sensor_summary_columns: list[str] = []
         self.sensor_centroids: dict[tuple[str, str], dict[str, float]] = {}
         self._load_artifacts()
 
+    def _load_shared_label_encoder(self) -> None:
+        shared_encoder_path = config.MODAL_RUNS_DIR / "freshness_label_encoder.joblib"
+        if not shared_encoder_path.exists():
+            return
+        shared_encoder = joblib.load(shared_encoder_path)
+        shared_classes = [str(label) for label in shared_encoder.classes_]
+        if shared_classes:
+            self.target_classes = shared_classes
+
     def _load_artifacts(self) -> None:
         try:
+            self._load_shared_label_encoder()
+
             # Image model powers image_only mode and the image branch of hybrid mode.
             if self.mode in {"image_only", "hybrid"}:
                 image_dir = config.MODAL_RUNS_DIR / "image_only"
                 image_model_path = image_dir / "image_only_freshness_model.joblib"
-                image_encoder_path = config.MODAL_RUNS_DIR / "freshness_label_encoder.joblib"
                 image_metadata_path = image_dir / "training_metadata.json"
+                image_encoder_path = image_dir / "image_only_label_encoder.joblib"
+                if not image_encoder_path.exists():
+                    image_encoder_path = config.MODAL_RUNS_DIR / "freshness_label_encoder.joblib"
 
                 self.image_model = joblib.load(image_model_path)
                 self.image_label_encoder = joblib.load(image_encoder_path)
                 self.image_metadata = json.loads(image_metadata_path.read_text(encoding="utf-8"))
                 self.image_preprocessor = self.image_model.named_steps["preprocessor"]
                 self.image_feature_columns = list(self.image_preprocessor.feature_names_in_)
-                self.target_classes = list(self.image_label_encoder.classes_)
+                self.image_target_classes = [str(label) for label in self.image_label_encoder.classes_]
 
-            # Sensor metadata / centroids power sensor_only mode and the sensor branch of hybrid mode.
+            # Sensor model powers sensor_only mode and the sensor branch of hybrid mode.
             sensor_dir = config.MODAL_RUNS_DIR / "sensor_only"
             sensor_metadata_path = sensor_dir / "training_metadata.json"
+            sensor_model_path = sensor_dir / "sensor_only_freshness_model.joblib"
+            sensor_encoder_path = sensor_dir / "sensor_only_label_encoder.joblib"
             self.sensor_metadata = json.loads(sensor_metadata_path.read_text(encoding="utf-8"))
-            self.sensor_summary_columns = [
-                column
-                for column in self.sensor_metadata.get("feature_columns", [])
-                if column.startswith("sensor_")
-                and not column.startswith("sensor_voc_")
-            ]
-            self.sensor_centroids = self._load_sensor_centroids()
 
-            LOGGER.info("Prediction artifacts loaded | mode=%s", self.mode)
+            if sensor_model_path.exists() and sensor_encoder_path.exists():
+                self.sensor_model = joblib.load(sensor_model_path)
+                self.sensor_label_encoder = joblib.load(sensor_encoder_path)
+                self.sensor_preprocessor = self.sensor_model.named_steps["preprocessor"]
+                self.sensor_feature_columns = list(self.sensor_preprocessor.feature_names_in_)
+                self.sensor_categorical_columns = [
+                    str(column)
+                    for column in self.sensor_metadata.get("categorical_columns", [])
+                ]
+                self.sensor_target_classes = [str(label) for label in self.sensor_label_encoder.classes_]
+                self.sensor_summary_columns = [
+                    column
+                    for column in self.sensor_feature_columns
+                    if column.startswith("sensor_")
+                ]
+            else:
+                # Fallback to the legacy centroid-based sensor branch when no
+                # trained sensor model is available.
+                self.sensor_summary_columns = [
+                    column
+                    for column in self.sensor_metadata.get("feature_columns", [])
+                    if column.startswith("sensor_") and not column.startswith("sensor_voc_")
+                ]
+                self.sensor_centroids = self._load_sensor_centroids()
+                self.sensor_target_classes = list(self.target_classes)
+
+            LOGGER.info(
+                "Prediction artifacts loaded | mode=%s | image_classes=%s | sensor_classes=%s",
+                self.mode,
+                self.image_target_classes or "-",
+                self.sensor_target_classes or "-",
+            )
         except Exception as exc:
             raise PredictionLoadError(f"Failed to load model artifacts: {exc}") from exc
 
@@ -155,6 +201,12 @@ class HybridFreshnessPredictor:
             base_sensor_columns=self.sensor_metadata.get("sensor_base_columns", DEFAULT_SENSOR_COLUMNS),
         )
 
+    def _pad_to_target_classes(
+        self,
+        raw_probs: dict[str, float],
+    ) -> dict[str, float]:
+        return {label: float(raw_probs.get(label, 0.0)) for label in self.target_classes}
+
     def _predict_image_probabilities(self, image_path: str | Path, meat_type: str) -> tuple[dict[str, float], dict[str, float]]:
         if self.image_model is None or self.image_label_encoder is None:
             raise PredictionLoadError("Image model is not loaded.")
@@ -168,13 +220,11 @@ class HybridFreshnessPredictor:
         classifier = self.image_model.named_steps["classifier"]
         if hasattr(classifier, "predict_proba"):
             probabilities = self.image_model.predict_proba(feature_frame)[0]
-            return (
-                {
-                    str(label): float(probability)
-                    for label, probability in zip(self.image_label_encoder.classes_, probabilities)
-                },
-                image_features,
-            )
+            raw = {
+                str(label): float(probability)
+                for label, probability in zip(self.image_label_encoder.classes_, probabilities)
+            }
+            return self._pad_to_target_classes(raw), image_features
 
         decision_function = getattr(self.image_model, "decision_function", None)
         if callable(decision_function):
@@ -182,19 +232,54 @@ class HybridFreshnessPredictor:
             shifted = decision_values - decision_values.max(axis=1, keepdims=True)
             softmax_scores = np.exp(shifted) / np.exp(shifted).sum(axis=1, keepdims=True)
             softmax_scores = softmax_scores[0]
-            return (
-                {
-                    str(label): float(score)
-                    for label, score in zip(self.image_label_encoder.classes_, softmax_scores)
-                },
-                image_features,
-            )
+            raw = {
+                str(label): float(score)
+                for label, score in zip(self.image_label_encoder.classes_, softmax_scores)
+            }
+            return self._pad_to_target_classes(raw), image_features
 
         predicted_index = int(self.image_model.predict(feature_frame)[0])
         predicted_label = str(self.image_label_encoder.inverse_transform([predicted_index])[0])
-        return ({label: 1.0 if label == predicted_label else 0.0 for label in self.target_classes}, image_features)
+        raw = {label: 1.0 if label == predicted_label else 0.0 for label in self.image_target_classes or self.target_classes}
+        return self._pad_to_target_classes(raw), image_features
 
     def _predict_sensor_probabilities(self, meat_type: str, sensor_values: dict[str, Any]) -> dict[str, float]:
+        if self.sensor_model is not None and self.sensor_label_encoder is not None:
+            sensor_summary = self._build_sensor_summary(sensor_values)
+            row: dict[str, Any] = {column: np.nan for column in self.sensor_feature_columns}
+            for column in self.sensor_feature_columns:
+                if column in sensor_summary:
+                    row[column] = sensor_summary[column]
+            if "meat_type" in self.sensor_feature_columns:
+                row["meat_type"] = meat_type
+            feature_frame = pd.DataFrame([row], columns=self.sensor_feature_columns)
+
+            classifier = self.sensor_model.named_steps["classifier"]
+            if hasattr(classifier, "predict_proba"):
+                probabilities = self.sensor_model.predict_proba(feature_frame)[0]
+                raw = {
+                    str(label): float(probability)
+                    for label, probability in zip(self.sensor_label_encoder.classes_, probabilities)
+                }
+            else:
+                decision_function = getattr(self.sensor_model, "decision_function", None)
+                if callable(decision_function):
+                    decision_values = np.asarray(decision_function(feature_frame)).reshape(1, -1)
+                    shifted = decision_values - decision_values.max(axis=1, keepdims=True)
+                    softmax_scores = np.exp(shifted) / np.exp(shifted).sum(axis=1, keepdims=True)
+                    softmax_scores = softmax_scores[0]
+                    raw = {
+                        str(label): float(score)
+                        for label, score in zip(self.sensor_label_encoder.classes_, softmax_scores)
+                    }
+                else:
+                    predicted_index = int(self.sensor_model.predict(feature_frame)[0])
+                    predicted_label = str(self.sensor_label_encoder.inverse_transform([predicted_index])[0])
+                    raw = {label: 1.0 if label == predicted_label else 0.0 for label in self.sensor_target_classes}
+
+            return self._pad_to_target_classes(raw)
+
+        # Legacy fallback: centroid-based sensor branch.
         sensor_summary = self._build_sensor_summary(sensor_values)
         distances: dict[str, float] = {}
         for label in self.target_classes:
@@ -228,9 +313,15 @@ class HybridFreshnessPredictor:
         sensor_probs: dict[str, float] | None,
     ) -> tuple[dict[str, float], str]:
         if self.mode == "image_only":
-            return (image_probs or {label: 0.0 for label in self.target_classes}, "Image-only model probability output.")
+            return (
+                image_probs or {label: 0.0 for label in self.target_classes},
+                "Image-only model probability output.",
+            )
         if self.mode == "sensor_only":
-            return (sensor_probs or {label: 0.0 for label in self.target_classes}, "Sensor nearest-class scores from dataset centroids.")
+            return (
+                sensor_probs or {label: 0.0 for label in self.target_classes},
+                "Sensor-only model probability output.",
+            )
 
         image_probs = image_probs or {label: 0.0 for label in self.target_classes}
         sensor_probs = sensor_probs or {label: 0.0 for label in self.target_classes}
@@ -238,13 +329,27 @@ class HybridFreshnessPredictor:
         sensor_weight = float(getattr(config, "HYBRID_SENSOR_WEIGHT", 0.35))
         total_weight = max(image_weight + sensor_weight, 1e-9)
 
-        fused = {
-            label: ((image_weight * image_probs.get(label, 0.0)) + (sensor_weight * sensor_probs.get(label, 0.0))) / total_weight
-            for label in self.target_classes
-        }
+        image_supports = set(self.image_target_classes) if self.image_target_classes else set(self.target_classes)
+
+        fused: dict[str, float] = {}
+        for label in self.target_classes:
+            if label in image_supports:
+                fused[label] = (
+                    (image_weight * image_probs.get(label, 0.0))
+                    + (sensor_weight * sensor_probs.get(label, 0.0))
+                ) / total_weight
+            else:
+                # Labels that the image model cannot produce (e.g. Neutral when
+                # the image head was trained on Fresh/Spoiled only) rely on the
+                # sensor branch directly.
+                fused[label] = float(sensor_probs.get(label, 0.0))
+
+        total = sum(fused.values())
+        if total > 0:
+            fused = {label: score / total for label, score in fused.items()}
         return (
             fused,
-            "Hybrid fusion of image-model probabilities and sensor nearest-class scores.",
+            "Hybrid fusion: Fresh/Spoiled from image+sensor, Neutral from sensor only.",
         )
 
     def _apply_spoiled_override(
