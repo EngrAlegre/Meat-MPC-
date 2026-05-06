@@ -1001,11 +1001,26 @@ class HybridFreshnessGUI:
             if object_stable:
                 self.stable_since = self.stable_since or current_time
                 stable_duration = current_time - self.stable_since
-                self.message_text.set(
-                    f"Object detected. Stability check running ({stable_duration:.1f}s / {config.OBJECT_STABILITY_DURATION_SECONDS:.1f}s)."
-                )
-                self.message_label.configure(fg=self.INFO)
-                if stable_duration >= config.OBJECT_STABILITY_DURATION_SECONDS:
+                settle_required = float(getattr(config, "POST_OBJECT_PLACEMENT_SETTLE_SECONDS", 0.0))
+                placement_elapsed = current_time - (self.object_detected_since or current_time)
+                stability_ready = stable_duration >= config.OBJECT_STABILITY_DURATION_SECONDS
+                settle_ready = placement_elapsed >= settle_required
+
+                if not settle_ready:
+                    remaining = max(0.0, settle_required - placement_elapsed)
+                    self.message_text.set(
+                        f"Object placed. Letting sensors and camera settle for {remaining:.1f}s "
+                        f"before scanning..."
+                    )
+                    self.message_label.configure(fg=self.INFO)
+                else:
+                    self.message_text.set(
+                        f"Object stable ({stable_duration:.1f}s / {config.OBJECT_STABILITY_DURATION_SECONDS:.1f}s). "
+                        f"Settle window complete."
+                    )
+                    self.message_label.configure(fg=self.INFO)
+
+                if stability_ready and settle_ready:
                     self.start_scan(trigger_source="automatic")
             else:
                 self.stable_since = None
@@ -1164,6 +1179,20 @@ class HybridFreshnessGUI:
             meat_classifier = self._get_meat_classifier()
             meat_detection = meat_classifier.classify(image_path)
 
+            # "Second thought": capture a fresh frame and re-classify. Both passes
+            # must agree on the meat type or the scan is rejected. This protects
+            # against single-frame mistakes (e.g. pork classified as chicken).
+            if (
+                meat_detection.is_valid_meat
+                and getattr(config, "MEAT_CLASSIFIER_SECOND_PASS_ENABLED", False)
+            ):
+                delay_seconds = float(getattr(config, "MEAT_CLASSIFIER_SECOND_PASS_DELAY_SECONDS", 1.0))
+                if delay_seconds > 0:
+                    time.sleep(delay_seconds)
+                with self.camera_lock:
+                    second_image_path = self._get_camera_service().capture_image(prefix="auto_scan_verify")
+                meat_detection = meat_classifier.verify(meat_detection, second_image_path)
+
             if not meat_detection.is_valid_meat:
                 return {
                     "image_path": image_path,
@@ -1280,10 +1309,7 @@ class HybridFreshnessGUI:
                     bg="#4d3b1d",
                     log_message="Object rejected by the meat classifier. Waiting for removal.",
                 )
-                self._set_message(
-                    "Scan stopped because no valid meat was detected in the captured image.",
-                    self.WARNING,
-                )
+                self._set_message("Error, please place the meat again.", self.WARNING)
                 return
 
             self._update_sensor_display(result["sensor_snapshot"])

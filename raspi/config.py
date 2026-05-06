@@ -34,6 +34,11 @@ EMPTY_REFERENCE_CAPTURE_INTERVAL_SECONDS = 0.25
 OBJECT_PRESENCE_CONFIRM_SECONDS = 1.5
 OBJECT_DETECTION_THRESHOLD = 0.025
 OBJECT_STABILITY_DURATION_SECONDS = 3.0
+# After the chamber baseline changes (object placed), wait this long before
+# triggering meat classification, sensor stabilization or freshness prediction.
+# Gives the MQ sensors and the camera AE/AWB time to settle on the new sample
+# so the captured frame and gas readings reflect the same steady state.
+POST_OBJECT_PLACEMENT_SETTLE_SECONDS = 10.0
 OBJECT_STABLE_FRAME_DIFF_THRESHOLD = 0.045
 OBJECT_MONITOR_INTERVAL_SECONDS = 0.8
 RESULT_HOLD_MIN_SECONDS = 2.0
@@ -57,6 +62,17 @@ MEAT_CLASSIFIER_METADATA_PATH = MEAT_CLASSIFIER_DIR / "metadata.json"
 MEAT_CLASSIFIER_NOT_MEAT_LABEL = "not_meat"
 MEAT_CLASSIFIER_VALID_LABELS = ("chicken", "pork", "beef")
 MEAT_CLASSIFIER_MIN_CONFIDENCE = 0.40
+
+# Test-time augmentation: average softmax over original + horizontal flip.
+# Reduces single-frame noise (e.g. lighting, orientation) without retraining.
+MEAT_CLASSIFIER_TTA_ENABLED = True
+
+# "Second thought" verification: capture a second frame after a short pause
+# and re-run the classifier. The scan only proceeds if both passes agree on
+# the meat type. If they disagree, the result is treated as not-valid-meat
+# so the operator can re-place the sample.
+MEAT_CLASSIFIER_SECOND_PASS_ENABLED = True
+MEAT_CLASSIFIER_SECOND_PASS_DELAY_SECONDS = 1.0
 MEAT_CLASSIFIER_TO_HYBRID_MEAT_TYPE = {
     "chicken": "Chicken",
     "pork": "Pork",
