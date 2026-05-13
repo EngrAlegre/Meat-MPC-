@@ -6,6 +6,11 @@ Usage:
 
 Ini-save niya yung images sa isang folder na may timestamp,
 tapos may log file din para ma-track yung session.
+
+HINDI automatic mag-start — kailangan i-press yung physical button
+(GPIO 22) or Enter sa keyboard bago mag-start ng capture.
+I-on muna yung ilaw, lagay yung meat, tapos saka lang i-press.
+
 Pag nag-Ctrl+C ka, safe lang — mag-sstop siya nang maayos.
 """
 from __future__ import annotations
@@ -14,6 +19,7 @@ import argparse
 import csv
 import signal
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -23,13 +29,64 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 from camera_capture import CameraCaptureService
 
+try:
+    from gpiozero import Button as GpioButton
+except Exception:
+    GpioButton = None
+
 
 STOP_FLAG = False
+START_FLAG = threading.Event()
 
 
 def _handle_signal(_sig, _frame):
     global STOP_FLAG
     STOP_FLAG = True
+    START_FLAG.set()  # unblock waiting din pag Ctrl+C
+
+
+def _keyboard_listener():
+    """Fallback: wait for Enter key (runs sa background thread)."""
+    try:
+        input()
+        START_FLAG.set()
+    except EOFError:
+        pass
+
+
+def wait_for_start_signal() -> None:
+    """Block hanggang ma-press yung physical button o Enter key."""
+    gpio_button = None
+
+    if GpioButton is not None:
+        try:
+            gpio_button = GpioButton(
+                config.RESERVED_BUTTON_GPIO_PIN,
+                pull_up=getattr(config, "BUTTON_PULL_UP", True),
+                bounce_time=getattr(config, "BUTTON_BOUNCE_SECONDS", 0.15),
+            )
+            gpio_button.when_pressed = lambda: START_FLAG.set()
+            print(f"  GPIO button ready sa pin {config.RESERVED_BUTTON_GPIO_PIN}.")
+        except Exception as exc:
+            print(f"  [WARNING] Hindi ma-init yung GPIO button: {exc}")
+            gpio_button = None
+
+    # Keyboard fallback — laging available
+    kb_thread = threading.Thread(target=_keyboard_listener, daemon=True)
+    kb_thread.start()
+
+    if gpio_button is not None:
+        print("  >> I-PRESS yung BUTTON o ENTER para mag-start. <<")
+    else:
+        print("  >> I-PRESS ang ENTER para mag-start. <<")
+
+    START_FLAG.wait()
+
+    if gpio_button is not None:
+        try:
+            gpio_button.close()
+        except Exception:
+            pass
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,14 +141,28 @@ def main() -> None:
 
     print("=" * 60)
     print(f"  Meat type:       {meat_type}")
-    print(f"  Interval:        {args.interval} minutes")
-    print(f"  Max duration:    {args.hours} hours ({max_captures} captures)")
+    print(f"  Interval:        every {args.interval} minutes")
+    print(f"  Total duration:  {args.hours} hours ({max_captures} captures)")
     print(f"  Output folder:   {output_dir}")
     print(f"  Log file:        {log_path}")
     print("=" * 60)
     print()
-    print("Starting camera... (Ctrl+C para i-stop)")
+    print("  Setup checklist:")
+    print("    1. I-ON yung ilaw (switch)")
+    print("    2. Ilagay yung meat sa chamber")
+    print("    3. I-close yung chamber")
+    print("    4. Saka lang i-press yung button / Enter")
     print()
+
+    # ── Wait for button press bago mag-start ──
+    wait_for_start_signal()
+
+    if STOP_FLAG:
+        print("\nCancelled bago mag-start.")
+        return
+
+    print()
+    print("Starting camera...")
 
     camera = CameraCaptureService(output_dir=output_dir)
 
@@ -111,6 +182,9 @@ def main() -> None:
 
     start_time = time.monotonic()
     capture_count = 0
+
+    print(f"Capturing... (Ctrl+C para i-stop)")
+    print()
 
     try:
         while capture_count < max_captures and not STOP_FLAG:
